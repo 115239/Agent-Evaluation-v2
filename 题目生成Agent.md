@@ -1,11 +1,11 @@
 # 题目生成Agent设计文档_Sin
 
-**版本**：V2.0  
-**日期**：2026-04-16  
+**版本**：V2.1  
+**日期**：2026-04-18  
 **状态**：待审核  
-**更新说明**：V2.0新增四通道输入、评分细则、题目质量保障体系、跑批评测流程、评测报告设计  
+**更新说明**：V2.1重构为8阶段MD工件流水线，新增阶段文档契约、阶段回退机制、过程工件输出定义  
 
-现在的输入来源，只对设计文档通道进行实现，先做成一个流程。
+当前优先实现设计文档通道，先将 PRD/设计文档 -> 阶段工件 MD -> 最终评测数据集 的全流程跑通。
 ---
 
 ## 一、概述
@@ -16,18 +16,18 @@
 
 **核心职责**：
 
-- 从设计文档提取或推导业务流程（基于 GUI 挖掘业务流程、基于 code 挖掘业务流程）
-- 动态分类流程类型
-- 为每个流程类型生成一个统一题
-- 生成五阶段期望行为
-- 验证题目满足设计原则
+- 从设计文档抽取业务模型与端到端业务流程
+- 将流程抽象为可评测的场景族，并为每类场景生成代表性样本
+- 为每个阶段输出标准化 MD 工件，供下游 Agent 继续处理
+- 生成统一题、五阶段期望行为、评分细则和质检结果
+- 发布可直接送入跑批评测引擎的数据集
 
 ### 1.2 核心设计原则
 
 | 原则 | 说明 |
 |------|------|
 | **从设计意图出发** | 评测应验证系统是否达成了设计意图，而非验证历史数据pattern |
-| **覆盖范围≠题目难度** | 题目数量由流程类型数量动态决定，难度由约束项/干扰项调节 |
+| **覆盖范围≠题目难度** | 题目数量由场景族数量动态决定，场景族来自流程地图抽象；难度由约束项/干扰项调节 |
 | **双层Fallback机制** | 流程定义不存在→从PRD推导；能力边界不存在→从流程特性推导 |
 | **业务闭环** | 每个题目都走完完整的业务流程 |
 | **业务真实性验证** | 所有推导必须验证是否符合真实业务场景 |
@@ -164,14 +164,14 @@ class LogConfig:
     failure_cases: List[dict]   # 人工标注的失败case（可选）
 ```
 
-### 2.4 Phase 0: 输入预处理（新增）
+### 2.4 Stage 0: 输入预处理（新增）
 
-在题目生成主流程（Phase 1-6）之前，必须执行输入预处理：
+在题目生成主流程（Stage 1-7）之前，必须执行输入预处理：
 
 ```python
 def preprocess_input(agent_input: AgentInput) -> InputAssessmentReport:
     """
-    Phase 0: 输入预处理
+    Stage 0: 输入预处理
     
     在进入题目生成主流程之前，验证输入质量并给出补充建议。
     """
@@ -218,17 +218,11 @@ class AgentOutput:
     题目生成Agent的输出
     """
     
-    # 数据集元信息
-    dataset_meta: DatasetMeta
+    # 阶段化过程工件（00-07共8份MD）
+    stage_artifacts: List[StageArtifactMeta]
     
-    # N个统一题（N=流程类型数量，动态决定）
-    unified_tests: List[UnifiedTest]
-    
-    # N个五阶段期望行为
-    reference_answers: List[ReferenceAnswer]
-    
-    # N个评分细则（新增：每道题配套的评分标准）
-    scoring_rubrics: List[ScoringRubric]
+    # 最终数据集包
+    final_dataset_package: FinalDatasetPackage
     
     # 验证报告
     validation_report: ValidationReport
@@ -238,6 +232,61 @@ class AgentOutput:
     
     # 质量度量（新增：数据集整体质量指标）
     quality_metrics: QualityMetrics
+
+
+class StageArtifactMeta:
+    """阶段工件元信息"""
+    stage_id: str
+    stage_name: str
+    doc_type: str
+    doc_path: str
+    version: str
+    status: str         # "draft" / "approved" / "blocked"
+    upstream_docs: List[str]
+    confidence: float   # 0-1
+
+
+class FinalDatasetPackage:
+    """最终交付包：Markdown工件 + JSON数据集"""
+    final_markdown_path: str
+    dataset_json_path: str
+    dataset_meta: DatasetMeta
+    unified_tests: List[UnifiedTest]
+    reference_answers: List[ReferenceAnswer]
+    scoring_rubrics: List[ScoringRubric]
+    traceability_links: Dict[str, Dict[str, str]]
+
+
+class ProcessMapDoc:
+    """02_process_map.md 的结构化对象"""
+    processes: List[BusinessProcess]
+    evidence_index: Dict[str, List[str]]
+    unresolved_questions: List[str]
+
+
+class ScenarioInventoryDoc:
+    """03_scenario_inventory.md 的结构化对象"""
+    scenario_types: List[dict]
+    omitted_processes: List[str]
+
+
+class SampleBlueprintDoc:
+    """04_sample_blueprint.md 的结构化对象"""
+    sample_blueprints: List[dict]
+    realism_rules: List[str]
+
+
+class ReferenceSpecDoc:
+    """05_reference_spec.md 的结构化对象"""
+    references: List[ReferenceAnswer]
+    rubrics: List[ScoringRubric]
+
+
+class DatasetQCDoc:
+    """06_dataset_qc.md 的结构化对象"""
+    coverage_matrix: dict
+    duplication_risks: List[str]
+    release_decision: str
 
 
 class DatasetMeta:
@@ -421,9 +470,73 @@ class QualityMetrics:
     independence_score: float  # 0-1, 越高越好
 ```
 
-### 3.6 标准化数据集输出格式
+### 3.6 标准化阶段工件 Markdown 格式
 
-题目生成Agent的最终输出应为以下JSON格式，可直接送入跑批评测引擎：
+题目生成Agent在最终 JSON 之外，还必须输出 8 份串行阶段工件。每个工件既给人看，也给下一个 Agent 阶段消费，因此格式固定。
+
+#### 文件命名约定
+
+| Stage | 文件名 | 作用 |
+|------|--------|------|
+| `00` | `00_input_assessment.md` | 输入完整性、质量和冲突审计 |
+| `01` | `01_business_model.md` | 业务目标、角色、对象、能力边界建模 |
+| `02` | `02_process_map.md` | 端到端业务流程地图 |
+| `03` | `03_scenario_inventory.md` | 测试场景族与代表流程选择 |
+| `04` | `04_sample_blueprint.md` | 样本蓝图、题面、约束和干扰 |
+| `05` | `05_reference_spec.md` | 五阶段期望行为和评分标准 |
+| `06` | `06_dataset_qc.md` | 覆盖性、独立性、真实性和发布门禁 |
+| `07` | `07_final_dataset.md` | 最终数据集说明和导出结果 |
+
+#### 通用 Frontmatter 契约
+
+```markdown
+---
+doc_type: process_map
+stage_id: "02"
+stage_name: "流程地图生成"
+version: "v2.1"
+source_channel: "design_doc"
+upstream_docs:
+  - "01_business_model.md"
+raw_inputs:
+  - "prd.md"
+  - "architecture.md"
+status: "approved"
+confidence: 0.84
+open_issues:
+  - "采购审批环节是否存在线下补录待确认"
+next_stage: "03_scenario_inventory.md"
+---
+
+## 输入摘要
+
+## 核心结论
+
+## 结构化产物
+
+## 风险与歧义
+
+## 质量检查
+
+## 下一阶段使用说明
+```
+
+#### 阶段文档的结构化载荷要求
+
+| 文件 | `## 结构化产物` 必含字段 |
+|------|------------------------|
+| `00_input_assessment.md` | `required_inputs_status`、`quality_score`、`conflicts`、`missing_evidence`、`go_no_go` |
+| `01_business_model.md` | `business_goal`、`target_users`、`core_capabilities`、`business_objects`、`success_metrics`、`system_boundaries` |
+| `02_process_map.md` | `processes[]`，其中每个流程含 `process_id`、`name`、`actors`、`trigger`、`inputs`、`steps`、`outputs`、`exceptions`、`source_evidence`、`inferred` |
+| `03_scenario_inventory.md` | `scenario_types[]`，其中每类场景含 `scenario_type_id`、`covered_processes`、`scenario_pattern`、`risk_focus`、`difficulty_hint`、`selected_representative_process` |
+| `04_sample_blueprint.md` | `sample_blueprints[]`，其中每个样本含 `sample_id`、`prompt_draft`、`persona`、`business_context`、`input_materials`、`constraints`、`interference_items`、`success_criteria`、`source_process` |
+| `05_reference_spec.md` | `references[]`，其中每项含 `sample_id`、`five_stage_expectations`、`rubric`、`fatal_deductions`、`veto_items`、`evidence_requirements` |
+| `06_dataset_qc.md` | `coverage_matrix`、`difficulty_distribution`、`duplication_risks`、`business_realism_issues`、`revision_actions`、`release_decision` |
+| `07_final_dataset.md` | `dataset_meta`、`items_summary`、`export_paths`、`batch_eval_mapping`、`traceability_links` |
+
+### 3.7 标准化数据集输出格式
+
+Stage 7 从 `07_final_dataset.md` 导出的 JSON 应为以下格式，可直接送入跑批评测引擎：
 
 ```json
 {
@@ -546,643 +659,514 @@ class QualityMetrics:
 
 ## 四、核心逻辑流程
 
-### 4.1 执行流程图
+### 4.1 总体执行流
+
+题目生成Agent不再直接从原始 PRD 跳到最终题目集，而是按 8 个串行阶段推进。每个阶段只产出一份标准化 MD，下一阶段优先只读上一阶段 MD 的固定结构，再按需回看原始资料。
 
 ```
-题目生成Agent执行流程
-┌──────────────────────────────────────────────────────────┐
-│                                                          │
-│  Phase 1: 业务流程提取或提炼                              │
-│  ┌─────────────────────────────────────────────────────┐│
-│  │ Fallback机制：                                       ││
-│  │ if design_docs.business_processes exists:           ││
-│  │     → 直接提取流程定义                               ││
-│  │ else:                                               ││
-│  │     → 从PRD+Architecture推导流程                     ││
-│  └─────────────────────────────────────────────────────┘│
-│                                                          │
-│  Phase 2: 流程分类（动态提取）                            │
-│  ┌─────────────────────────────────────────────────────┐│
-│  │ 提取流程特性作为分类维度                             ││
-│  │ 根据特性组合自动聚类                                 ││
-│  │ 为每个聚类命名                                       ││
-│  └─────────────────────────────────────────────────────┘│
-│                                                          │
-│  Phase 3: 题目数量确定                                    │
-│  ┌─────────────────────────────────────────────────────┐│
-│  │ 题目数量 = 流程类型数量                              ││
-│  │ 每个流程类型选一个代表性流程                         ││
-│  └─────────────────────────────────────────────────────┘│
-│                                                          │
-│  Phase 4: 约束项/干扰项设计                               │
-│  ┌─────────────────────────────────────────────────────┐│
-│  │ Fallback机制：                                       ││
-│  │ if capability_scope.weak_points exists:             ││
-│  │     → 根据weak_points映射                            ││
-│  │ else:                                               ││
-│  │     → 从流程特性推导                                 ││
-│  │                                                     ││
-│  │ 业务真实性验证（必须执行）                           ││
-│  └─────────────────────────────────────────────────────┘│
-│                                                          │
-│  Phase 5: 五阶段期望行为生成                              │
-│  ┌─────────────────────────────────────────────────────┐│
-│  │ 基于业务流程步骤定义                                 ││
-│  │ 每个题目都是业务闭环                                 ││
-│  └─────────────────────────────────────────────────────┘│
-│                                                          │
-│  Phase 6: 验证与输出                                      │
-│  ┌─────────────────────────────────────────────────────┐│
-│  │ 验证题目满足5设计原则                                ││
-│  │ 输出N个统一题 + 五阶段期望行为                       ││
-│  └─────────────────────────────────────────────────────┘│
-│                                                          │
-└──────────────────────────────────────────────────────────┘
+原始输入
+PRD / Architecture / DomainKnowledge
+        │
+        ▼
+Stage 0 输入审计
+        ▼
+00_input_assessment.md
+        │
+        ▼
+Stage 1 业务建模
+        ▼
+01_business_model.md
+        │
+        ▼
+Stage 2 流程地图生成
+        ▼
+02_process_map.md
+        │
+        ▼
+Stage 3 测试场景抽象
+        ▼
+03_scenario_inventory.md
+        │
+        ▼
+Stage 4 样本蓝图设计
+        ▼
+04_sample_blueprint.md
+        │
+        ▼
+Stage 5 五阶段参考标准生成
+        ▼
+05_reference_spec.md
+        │
+        ▼
+Stage 6 数据集质检与编排
+        ▼
+06_dataset_qc.md
+        │
+        ▼
+Stage 7 数据集发布
+        ▼
+07_final_dataset.md + dataset.json
 ```
 
-### 4.2 Phase 1: 业务流程提取或提炼
-
-#### 优先路径：设计文档有流程定义
+### 4.2 主编排器逻辑
 
 ```python
-def extract_business_processes(design_docs):
+def run_dataset_generation_pipeline(agent_input: AgentInput) -> AgentOutput:
     """
-    优先路径：直接提取流程定义
+    8阶段串行流水线
     """
-    if design_docs.business_processes and len(design_docs.business_processes) > 0:
-        processes = []
-        for process_def in design_docs.business_processes:
-            process = BusinessProcess(
-                process_id=process_def.id,
-                process_name=process_def.name,
-                actors=extract_actors(process_def),
-                steps=extract_steps(process_def),
-                triggers=extract_triggers(process_def),
-                outputs=extract_outputs(process_def)
-            )
-            processes.append(process)
-        return processes
-```
 
-#### Fallback路径：从PRD推导流程
+    artifacts = []
 
-```python
-def infer_processes_from_prd(prd, architecture, domain_knowledge):
-    """
-    Fallback路径：从PRD推导业务流程
-    
-    推导公式：流程 = 用户角色 × 核心功能 × 业务目标
-    """
-    processes = []
-    
-    # 1. 提取用户群体
-    user_groups = prd.target_users
-    
-    # 2. 提取核心功能
-    core_features = architecture.core_features
-    
-    # 3. 提取业务目标
-    business_objective = prd.business_objective
-    
-    # 4. 推导流程
-    for user_group in user_groups:
-        user_needs = user_group.get("needs", [])
-        matching_features = match_user_needs_to_features(user_needs, core_features)
-        
-        for need, feature in matching_features:
-            process = infer_single_process(
-                user_role=user_group["role"],
-                user_need=need,
-                feature=feature,
-                business_objective=business_objective
-            )
-            processes.append(process)
-    
-    # 5. 合并相似流程
-    processes = merge_similar_processes(processes)
-    
-    return processes
-```
+    stage0 = run_stage_0_input_assessment(agent_input)
+    artifacts.append(stage0.meta)
+    ensure_stage_gate_passed(stage0, stop_on_block=True)
 
-#### 推导单个流程
+    stage1 = run_stage_1_business_modeling(stage0.doc_path, agent_input)
+    artifacts.append(stage1.meta)
+    ensure_stage_gate_passed(stage1)
 
-```python
-def infer_single_process(user_role, user_need, feature, business_objective):
-    """
-    推导单个业务流程
-    
-    推导逻辑：
-    - 流程名称：用户角色 + 需求类型
-    - 流程触发：该用户群体的典型需求场景
-    - 流程输出：业务目标的预期产出
-    - 流程步骤：核心功能的使用顺序
-    """
-    
-    # 推导流程名称
-    process_name = f"{user_role}{feature.name}流程"
-    
-    # 推导触发条件
-    triggers = infer_triggers_from_user_need(user_role, user_need)
-    
-    # 推导输出
-    outputs = infer_outputs_from_feature(feature, business_objective)
-    
-    # 推导步骤
-    steps = infer_steps_from_feature(feature)
-    
-    # 推导参与者
-    actors = [Actor(role=user_role, level=infer_actor_level(user_role))]
-    
-    return BusinessProcess(
-        process_name=process_name,
-        actors=actors,
-        steps=steps,
-        triggers=triggers,
-        outputs=outputs,
-        inferred=True  # 标注为推导生成
+    stage2 = run_stage_2_process_mapping(stage1.doc_path, agent_input)
+    artifacts.append(stage2.meta)
+    ensure_stage_gate_passed(stage2)
+
+    stage3 = run_stage_3_scenario_inventory(stage2.doc_path)
+    artifacts.append(stage3.meta)
+    ensure_stage_gate_passed(stage3)
+
+    stage4 = run_stage_4_sample_blueprint(stage3.doc_path, agent_input)
+    artifacts.append(stage4.meta)
+    ensure_stage_gate_passed(stage4)
+
+    stage5 = run_stage_5_reference_spec(stage4.doc_path, agent_input)
+    artifacts.append(stage5.meta)
+    ensure_stage_gate_passed(stage5)
+
+    stage6 = run_stage_6_dataset_qc(stage4.doc_path, stage5.doc_path)
+    artifacts.append(stage6.meta)
+    ensure_stage_gate_passed(stage6)
+
+    stage7 = run_stage_7_publish(stage6.doc_path, stage5.doc_path)
+    artifacts.append(stage7.meta)
+
+    return AgentOutput(
+        stage_artifacts=artifacts,
+        final_dataset_package=stage7.package,
+        validation_report=stage6.validation_report,
+        process_inference_report=stage2.process_inference_report,
+        quality_metrics=stage6.quality_metrics,
     )
 ```
 
+### 4.3 阶段串联总表
 
+| Stage | 上游输入 | 核心任务 | 输出工件 | 放行门槛 |
+|------|---------|---------|---------|---------|
+| `0` 输入审计 | 原始设计文档 | 判断输入是否足以启动 | `00_input_assessment.md` | `go_no_go = go` |
+| `1` 业务建模 | `00` + 原始文档 | 抽取目标、角色、对象、边界 | `01_business_model.md` | 业务目标、用户角色、核心能力完整 |
+| `2` 流程地图生成 | `01` + 原始文档 | 提取或推导端到端流程 | `02_process_map.md` | 至少1个可执行闭环流程 |
+| `3` 测试场景抽象 | `02` | 形成场景族并选代表流程 | `03_scenario_inventory.md` | 每类场景可映射到流程 |
+| `4` 样本蓝图设计 | `03` + 领域知识 | 设计题干、约束、干扰和成功标准 | `04_sample_blueprint.md` | 每个样本具备完整题面蓝图 |
+| `5` 五阶段参考标准 | `04` | 生成期望行为和评分标准 | `05_reference_spec.md` | 五阶段均可判分 |
+| `6` 数据集质检 | `04` + `05` | 覆盖性、独立性、真实性、难度平衡 | `06_dataset_qc.md` | `release_decision = approved` |
+| `7` 数据集发布 | `06` + `05` | 导出最终 Markdown 和 JSON | `07_final_dataset.md` | 可供跑批引擎直接消费 |
 
-### 4.3 Phase 2: 流程分类（动态提取）
+### 4.4 Stage 0: 输入审计
 
-#### 分类维度提取
+**目标**：在进入建模之前，明确输入是否足够、是否冲突、是否需要人工补充。
 
-```python
-def extract_classification_dimensions(processes):
-    """
-    提取分类维度
-    
-    从所有流程的特性中提取可用于分类的维度
-    """
-    
-    dimensions = []
-    
-    # 1. 提取触发类型维度
-    trigger_types = set()
-    for process in processes:
-        for trigger in process.triggers:
-            trigger_types.add(trigger.type)
-    
-    if len(trigger_types) > 1:
-        dimensions.append(ClassificationDimension(
-            name="trigger_type",
-            values=list(trigger_types)
-        ))
-    
-    # 2. 提取输出类型维度
-    output_types = set()
-    for process in processes:
-        for output in process.outputs:
-            output_types.add(output.category)
-    
-    if len(output_types) > 1:
-        dimensions.append(ClassificationDimension(
-            name="output_type",
-            values=list(output_types)
-        ))
-    
-    # 3. 提取参与者层级维度
-    actor_levels = set()
-    for process in processes:
-        for actor in process.actors:
-            actor_levels.add(actor.level)
-    
-    if len(actor_levels) > 1:
-        dimensions.append(ClassificationDimension(
-            name="actor_level",
-            values=list(actor_levels)
-        ))
-    
-    return dimensions
-```
+**输入**：
+- 原始 PRD
+- Architecture 文档
+- 可选的流程定义、能力边界、领域知识库
 
-#### 流程聚类
+**核心动作**：
+- 检查必须字段是否存在
+- 评估 PRD 是否可操作，而非只有概念描述
+- 检查 PRD、Architecture、补充材料之间是否互相矛盾
+- 判断设计文档通道的推荐提取策略
+- 生成缺失信息列表和补充优先级
 
-```python
-def cluster_processes_by_features(processes, dimensions):
-    """
-    根据特性聚类流程
-    
-    使用聚类算法将相似特性的流程归为一类
-    """
-    
-    clusters = {}
-    
-    for process in processes:
-        # 找出该流程最显著的分类特征
-        primary_feature = find_primary_feature(process, dimensions)
-        cluster_key = f"cluster_{primary_feature}"
-        
-        if cluster_key not in clusters:
-            clusters[cluster_key] = []
-        clusters[cluster_key].append(process)
-    
-    return clusters
-```
+**`00_input_assessment.md` 的结构化产物格式**：
+- `required_inputs_status`
+- `quality_score`
+- `conflicts`
+- `missing_evidence`
+- `suggestions`
+- `go_no_go`
 
-#### 类型命名
+**推进门槛**：
+- `prd` 和 `architecture` 均存在
+- `quality_score >= 0.6`
+- 关键冲突项全部被记录
+- `go_no_go = go`
 
-```python
-def generate_type_name(cluster_processes):
-    """
-    为聚类生成类型名称
-    
-    基于聚类内流程的共同特性命名
-    """
-    
-    common_trigger = find_common_trigger_type(cluster_processes)
-    common_output = find_common_output_type(cluster_processes)
-    
-    if common_trigger and common_output:
-        return f"{common_trigger}-{common_output}类"
-    elif common_trigger:
-        return f"{common_trigger}类"
-    elif common_output:
-        return f"{common_output}类"
-    else:
-        return "其他类"
-```
+### 4.5 Stage 1: 业务建模
 
-### 4.4 Phase 3: 题目数量确定
+**目标**：把原始设计文档压缩为业务语义底座，让后续流程推导不再直接依赖杂乱原文。
 
-```python
-def determine_test_count(process_types):
-    """
-    题目数量动态决定
-    
-    原则：每个流程类型对应一个题目
-    """
-    
-    return len(process_types)
+**输入**：
+- `00_input_assessment.md`
+- 原始 PRD / Architecture / 可选知识库
 
+**核心动作**：
+- 统一业务目标和验收指标
+- 抽取目标用户、关键角色、协同关系
+- 建模核心能力、业务对象、输入资料、输出产物
+- 划定系统边界、权限边界、不可替代的人工环节
+- 标注证据来源，避免后续“模型脑补”
 
-def select_representative_process(type_processes):
-    """
-    从每个类型中选择代表性流程
-    
-    选择依据：
-    - 流程复杂度
-    - 业务重要性
-    - 覆盖全面性
-    """
-    
-    # 按业务重要性排序
-    scored_processes = []
-    for process in type_processes:
-        score = calculate_process_importance(process)
-        scored_processes.append((process, score))
-    
-    scored_processes.sort(key=lambda x: x[1], reverse=True)
-    
-    return scored_processes[0][0]
-```
+**`01_business_model.md` 的结构化产物格式**：
+- `business_goal`
+- `target_users`
+- `core_capabilities`
+- `business_objects`
+- `success_metrics`
+- `system_boundaries`
+- `human_in_the_loop_points`
 
-### 4.5 Phase 4: 约束项/干扰项设计
+**推进门槛**：
+- 业务目标、核心能力、目标用户三者形成闭环
+- 每个核心能力都有原始文档证据
+- 系统边界和人工边界被显式写出
 
-#### 约束项设计（带Fallback）
+### 4.6 Stage 2: 流程地图生成
 
-```python
-def add_constraints_dynamically(process, domain_knowledge, design_docs):
-    """
-    约束项动态添加（带Fallback）
-    """
-    
-    constraints = []
-    
-    # === 优先路径：从weak_points映射 ===
-    if design_docs.capability_scope and design_docs.capability_scope.weak_points:
-        for weak_point in design_docs.capability_scope.weak_points:
-            constraint = generate_constraint_from_weak_point(weak_point, process)
-            if constraint:
-                constraints.append(constraint)
-    
-    # === Fallback路径：从流程特性推导 ===
-    else:
-        inferred_constraints = infer_constraints_from_process(
-            process, domain_knowledge
-        )
-        constraints.extend(inferred_constraints)
-    
-    # === 基础约束（始终执行）===
-    # 规程时效性约束
-    regulation_version = find_latest_regulation(domain_knowledge)
-    if regulation_version:
-        constraints.append(f"依据{regulation_version}")
-    
-    # 业务真实性验证
-    constraints = verify_business_realism(constraints, domain_knowledge)
-    
-    return constraints
-```
+**目标**：抽取或推导可用于评测的端到端业务流程，而不是只罗列功能点。
 
-#### 约束项推导维度
+**输入**：
+- `01_business_model.md`
+- 原始流程定义（若存在）
+- 原始 PRD / Architecture
 
-```python
-def infer_constraints_from_process(process, domain_knowledge):
-    """
-    从流程特性推导约束项
-    
-    推导维度：
-    1. 跨流程依赖 → 需要信息整合能力
-    2. 规程多版本 → 需要版本区分能力
-    3. 参与者层级 → 需要权限边界意识
-    4. 输出项数量 → 需要闭环交付能力
-    5. 触发类型 → 需要模糊需求理解能力
-    """
-    
-    constraints = []
-    
-    # 1. 跨流程依赖
-    if process.cross_process_dependency == "跨流程":
-        constraints.append("需整合多个流程的信息，形成完整方案")
-    
-    # 2. 规程多版本
-    if has_multiple_regulation_versions(domain_knowledge, process):
-        constraints.append("需引用最新规程版本，排除已废止版本")
-    
-    # 3. 参与者层级
-    if "管理层" in [actor.level for actor in process.actors]:
-        constraints.append("需识别信息访问权限边界，标注受限信息")
-    
-    # 4. 输出项数量
-    if len(process.outputs) > 1:
-        constraints.append("需完整交付所有输出项，形成闭环")
-    
-    # 5. 触发类型
-    if has_fuzzy_trigger(process):
-        constraints.append("需合理推断模糊需求，或主动追问澄清")
-    
-    return constraints
-```
+**核心动作**：
+- 优先直接提取设计文档中已有的业务流程定义
+- 若无流程定义，则基于 `用户角色 × 核心能力 × 业务目标` 推导流程
+- 将流程统一成 `触发 -> 输入 -> 步骤 -> 输出 -> 异常` 的标准形态
+- 为每个流程记录证据来源、推导痕迹和置信度
+- 合并高度相似流程，避免后续题目冗余
 
-#### 干扰项设计（带Fallback）
+**`02_process_map.md` 的结构化产物格式**：
+- `processes[]`
+- 每个 `process` 固定包含：
+  - `process_id`
+  - `name`
+  - `goal`
+  - `actors`
+  - `preconditions`
+  - `trigger`
+  - `inputs`
+  - `steps`
+  - `outputs`
+  - `exceptions`
+  - `dependencies`
+  - `source_evidence`
+  - `inferred`
+  - `confidence`
 
-```python
-def add_interference_dynamically(process, domain_knowledge, design_docs):
-    """
-    干扰项动态添加（带Fallback）
-    """
-    
-    interference = []
-    
-    # === 优先路径：从weak_points映射 ===
-    if design_docs.capability_scope and design_docs.capability_scope.weak_points:
-        for weak_point in design_docs.capability_scope.weak_points:
-            interference_item = generate_interference_from_weak_point(weak_point, process)
-            if interference_item:
-                interference.append(interference_item)
-    
-    # === Fallback路径：从流程特性推导 ===
-    else:
-        inferred_interference = infer_interference_from_process(
-            process, domain_knowledge
-        )
-        interference.extend(inferred_interference)
-    
-    # 业务真实性验证
-    interference = verify_business_realism(interference, domain_knowledge)
-    
-    return interference
-```
+**推进门槛**：
+- 至少存在 1 个完整流程
+- 每个流程都必须同时包含触发、步骤、输出
+- 推导流程必须标注 `inferred = true`
+- 平均流程置信度达到设定阈值，否则按第五章回退
 
-#### 干扰项推导维度
+### 4.7 Stage 3: 测试场景抽象
 
-```python
-def infer_interference_from_process(process, domain_knowledge):
-    """
-    从流程特性推导干扰项
-    
-    推导维度：
-    1. 规程规则冲突
-    2. 规程多版本并存
-    3. 流程异常情况
-    4. 模糊触发条件
-    5. 跨部门角色混淆
-    """
-    
-    interference = []
-    
-    # 1. 规程规则冲突
-    if has_regulation_conflicts(domain_knowledge, process):
-        interference.append("规程存在冲突条款，需正确判断适用场景")
-    
-    # 2. 规程多版本并存
-    if has_multiple_regulation_versions(domain_knowledge, process):
-        interference.append("规程有新旧版本并存，需正确引用最新版")
-    
-    # 3. 流程异常情况
-    if has_exception_handling_steps(process):
-        interference.append("流程中存在异常情况，需给出备选处理方案")
-    
-    # 4. 模糊触发条件
-    fuzzy_triggers = find_fuzzy_triggers(process)
-    if fuzzy_triggers:
-        for trigger in fuzzy_triggers:
-            interference.append(f"需求描述存在模糊性：'{trigger.description}'，需合理推断或追问澄清")
-    
-    # 5. 跨部门角色混淆
-    if len(process.actors) > 1:
-        interference.append("流程涉及多个角色，责任边界需明确")
-    
-    return interference
-```
+**目标**：把“流程列表”提升为“测试场景族”，形成后续样本设计的覆盖骨架。
 
-### 4.6 Phase 5: 五阶段期望行为生成
+**输入**：
+- `02_process_map.md`
 
-```python
-def generate_reference_answer(test, process, domain_knowledge, design_docs):
-    """
-    五阶段期望行为生成
-    
-    基于业务流程步骤定义
-    """
-    
-    reference = ReferenceAnswer(test_id=test.test_id)
-    
-    # 定义问题期望（基于流程触发条件）
-    reference.define_problem_expected = DefineProblemExpected(
-        intent_understanding=f"应理解用户意图是'{process.process_name}'",
-        implicit_needs=[output.name for output in process.outputs],
-        problem_essence=process.process_name
-    )
-    
-    # 拆解问题期望（基于流程步骤）
-    reference.decompose_expected = DecomposeExpected(
-        expected_steps=[step.name for step in process.steps],
-        priority_ordering=f"按{process.process_name}流程顺序执行"
-    )
-    
-    # 方案生成期望（基于流程信息源）
-    reference.solution_expected = SolutionExpected(
-        information_sources=find_required_docs(process, domain_knowledge),
-        cross_doc_integration=f"整合{len(process.required_capabilities)}个信息源"
-    )
-    
-    # 执行落地期望（基于流程输出）
-    reference.execution_expected = ExecutionExpected(
-        output_format=f"结构化输出：{[o.name for o in process.outputs]}"
-    )
-    
-    # 元认知期望（基于系统能力边界）
-    reference.meta_expected = MetaExpected(
-        source_annotation="应标注信息来源（规程版本、条款号）",
-        boundary_awareness="应识别权限边界"
-    )
-    
-    return reference
-```
+**核心动作**：
+- 从流程中抽取触发模式、输出模式、风险模式、协作模式
+- 将相近流程聚为同一测试场景族，而不是简单做标签分类
+- 为每个场景族选取一个代表流程
+- 为代表流程给出选择依据：业务重要性、覆盖面、风险度、复杂度
+- 记录未被覆盖的边缘流程，供 Stage 6 做覆盖审计
 
-### 4.7 Phase 6: 验证与输出
+**`03_scenario_inventory.md` 的结构化产物格式**：
+- `scenario_types[]`
+- 每个 `scenario_type` 固定包含：
+  - `scenario_type_id`
+  - `scenario_pattern`
+  - `covered_processes`
+  - `risk_focus`
+  - `difficulty_hint`
+  - `selected_representative_process`
+  - `selection_rationale`
 
-#### 5设计原则验证
+**推进门槛**：
+- 每类场景都可映射回一个或多个流程
+- 每个代表流程都给出可解释的选择依据
+- 场景总数 = 首轮计划题目数
 
-```python
-def validate_test_quality(test, analysis):
-    """
-    验证5设计原则
-    
-    统一题验收标准（任何一个为否，题目不合格）
-    """
-    
-    report = ValidationReport(test_id=test.test_id)
-    
-    # 1. 真实性：上线后每天都会遇到吗？
-    report.real_encounter = validate_real_encounter(test, analysis)
-    
-    # 2. 闭环性：需要完整的五阶段流程吗？
-    report.five_stage_coverage = validate_five_stage_coverage(test)
-    
-    # 3. 可量化：有明确的成功标准吗？
-    report.quantifiable_criteria = validate_quantifiable(test)
-    
-    # 4. 区分度：能区分不同水平的系统吗？
-    report.discrimination = validate_discrimination(test, analysis)
-    
-    # 5. 预测力：能预测业务表现吗？
-    report.prediction_power = validate_prediction_power(test, analysis)
-    
-    report.passed = all([
-        report.real_encounter,
-        report.five_stage_coverage,
-        report.quantifiable_criteria,
-        report.discrimination,
-        report.prediction_power
-    ])
-    
-    return report
-```
+### 4.8 Stage 4: 样本蓝图设计
 
-#### 业务真实性验证
+**目标**：把场景族转换为可生成题目的样本蓝图，定义题面、约束、干扰和成功标准。
+
+**输入**：
+- `03_scenario_inventory.md`
+- 领域知识库
+- 可选的能力边界定义
+
+**核心动作**：
+- 基于代表流程生成用户身份、业务上下文、输入材料和题干草案
+- 若 `capability_scope.weak_points` 存在，则映射为约束项和干扰项
+- 若不存在，则从流程复杂度、异常处理、跨流程依赖推导约束项和干扰项
+- 执行业务真实性验证，剔除“只为难模型、不像真实业务”的设计
+- 给出成功标准和预期交付物
+
+**`04_sample_blueprint.md` 的结构化产物格式**：
+- `sample_blueprints[]`
+- 每个 `sample_blueprint` 固定包含：
+  - `sample_id`
+  - `prompt_draft`
+  - `persona`
+  - `business_context`
+  - `input_materials`
+  - `constraints`
+  - `interference_items`
+  - `success_criteria`
+  - `source_process`
+  - `realism_evidence`
+
+**推进门槛**：
+- 每个样本都有完整题干草案
+- 每个样本至少绑定 1 个来源流程
+- 每个样本具备成功标准
+- 约束和干扰已通过真实性校验
+
+### 4.9 Stage 5: 五阶段参考标准生成
+
+**目标**：把样本蓝图转换为可直接评测的参考标准，而不是仅生成“参考答案”。
+
+**输入**：
+- `04_sample_blueprint.md`
+
+**核心动作**：
+- 为每个样本生成五阶段期望行为
+- 生成逐阶段评分点和证据类型
+- 补齐致命扣分项和一票否决项
+- 标明哪些标准来自规则匹配，哪些需要 LLM Judge
+- 校验每一道题是否具备“可评分、可追责、可复核”的属性
+
+**`05_reference_spec.md` 的结构化产物格式**：
+- `references[]`
+- 每个 `reference` 固定包含：
+  - `sample_id`
+  - `five_stage_expectations`
+  - `rubric`
+  - `fatal_deductions`
+  - `veto_items`
+  - `evidence_requirements`
+
+**推进门槛**：
+- 五阶段都有明确期望行为
+- 每个评分点都有证据类型
+- 致命扣分和 veto 条件可操作、可解释
+
+### 4.10 Stage 6: 数据集质检与编排
+
+**目标**：在发布前对整套数据集做覆盖、独立性、真实性和难度的总体验证。
+
+**输入**：
+- `04_sample_blueprint.md`
+- `05_reference_spec.md`
+
+**核心动作**：
+- 构建流程 x 五阶段覆盖矩阵
+- 检查题目间重叠度，避免“换皮同题”
+- 校验难度分布是否失衡
+- 检查每题是否真实、闭环、可量化、有区分度
+- 根据质检结果决定通过、回退重做或阻断发布
+
+**`06_dataset_qc.md` 的结构化产物格式**：
+- `coverage_matrix`
+- `difficulty_distribution`
+- `duplication_risks`
+- `business_realism_issues`
+- `revision_actions`
+- `release_decision`
+
+**推进门槛**：
+- 无关键覆盖盲区
+- 无高风险重复题
+- `release_decision = approved`
+
+### 4.11 Stage 7: 数据集发布
+
+**目标**：基于质检通过的样本和参考标准，输出最终可交付包。
+
+**输入**：
+- `06_dataset_qc.md`
+- `05_reference_spec.md`
+
+**核心动作**：
+- 生成最终 `dataset_meta`
+- 组装 `items[]`
+- 导出 `07_final_dataset.md`
+- 导出跑批引擎可用的标准 JSON
+- 写入 `traceability_links`，使每个样本都能追溯到流程、场景和质检结论
+
+**`07_final_dataset.md` 的结构化产物格式**：
+- `dataset_meta`
+- `items_summary`
+- `export_paths`
+- `batch_eval_mapping`
+- `traceability_links`
+
+**推进门槛**：
+- JSON 可直接被跑批引擎加载
+- 每题都有可回溯链路
+- 最终 Markdown 与 JSON 内容一致
+
+### 4.12 业务真实性验证（贯穿 Stage 4-6）
 
 ```python
 def verify_business_realism(items, domain_knowledge):
     """
-    业务真实性验证
-    
     验证标准：
-    1. 该约束/干扰在真实业务中是否可能出现？
-    2. 该约束/干扰是否符合业务常识？
-    3. 该约束/干扰是否有规程/制度支撑？
+    1. 该约束/干扰/题面是否可能出现在真实业务中
+    2. 是否符合业务常识和角色职责
+    3. 是否有规程、制度或历史案例支撑
     """
-    
+
     verified_items = []
-    
+
     for item in items:
-        # 检查是否有规程支撑
         if has_real_regulation_support(item, domain_knowledge):
             verified_items.append(item)
-        # 检查是否符合业务常识
         elif matches_business_commonsense(item, domain_knowledge):
             verified_items.append(item)
-        # 检查是否可能出现在真实场景
         elif likely_in_real_scenario(item, domain_knowledge):
             verified_items.append(item)
-    
+
     return verified_items
 ```
 
 ---
 
-## 五、Fallback机制详细设计
+## 五、Fallback与回退机制详细设计
 
 ### 5.1 双层Fallback链
 
-```
-第一层Fallback：流程定义不存在
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-触发条件：design_docs.business_processes 为空或不存在
+| 触发位置 | 缺失项 | 处理策略 | 回填到的工件 |
+|---------|-------|---------|-------------|
+| Stage 2 | `business_processes` 不存在 | 从 `01_business_model.md` 推导流程 | `02_process_map.md` |
+| Stage 4 / 5 | `capability_scope` 或 `weak_points` 不存在 | 从流程与场景风险推导约束、干扰和评分重点 | `04_sample_blueprint.md` / `05_reference_spec.md` |
 
-Fallback逻辑：
-┌─────────────────────────────────────────────────────────┐
-│ 从PRD推导流程                                            │
-│                                                         │
-│ 推导公式：流程 = 用户角色 × 核心功能 × 业务目标          │
-│                                                         │
-│ 推导步骤：                                              │
-│ 1. 提取PRD的用户群体（谁用系统）                        │
-│ 2. 提取Architecture的核心功能（系统提供什么）            │
-│ 3. 提取PRD的业务目标（预期产出是什么）                  │
-│ 4. 用户群体需求 × 对应功能 → 推导业务流程              │
-│ 5. 为每个流程推导：触发条件、输出、步骤、参与者        │
-└─────────────────────────────────────────────────────────┘
+#### 第一层Fallback：流程定义不存在
 
-输出：List[BusinessProcess]（标注 inferred=True）
-```
+```python
+def infer_processes_from_business_model(business_model_doc, design_docs):
+    """
+    推导公式：流程 = 用户角色 × 核心能力 × 业务目标
+    """
 
-```
-第二层Fallback：能力边界定义不存在
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-触发条件：design_docs.capability_scope 为空或不存在
+    processes = []
 
-Fallback逻辑：
-┌─────────────────────────────────────────────────────────┐
-│ 从流程特性推导约束项和干扰项                            │
-│                                                         │
-│ 约束项推导维度：                                        │
-│ 1. 跨流程依赖 → 需要信息整合能力                      │
-│ 2. 规程多版本 → 需要版本区分能力                      │
-│ 3. 参与者层级 → 需要权限边界意识                      │
-│ 4. 输出项数量 → 需要闭环交付能力                      │
-│ 5. 触发类型 → 需要模糊需求理解能力                    │
-│                                                         │
-│ 干扰项推导维度：                                        │
-│ 1. 规程规则冲突                                        │
-│ 2. 规程多版本并存                                      │
-│ 3. 流程异常情况                                        │
-│ 4. 模糊触发条件                                        │
-│ 5. 跨部门角色混淆                                      │
-│                                                         │
-│ 业务真实性验证（必须执行）                              │
-└─────────────────────────────────────────────────────────┘
+    for user in business_model_doc.target_users:
+        for capability in business_model_doc.core_capabilities:
+            if capability_supports_user_goal(user, capability, business_model_doc.business_goal):
+                processes.append(
+                    build_inferred_process(
+                        user_role=user["role"],
+                        capability=capability,
+                        business_goal=business_model_doc.business_goal,
+                        source_evidence=collect_evidence(user, capability, design_docs),
+                    )
+                )
 
-输出：constraints[] + interference[]（已验证业务真实性）
+    return merge_similar_processes(processes)
 ```
 
-### 5.2 Fallback决策流程
+**推导要求**：
+- 每个推导流程都要写入 `source_evidence`
+- 每个推导流程都要标记 `inferred = true`
+- 每个推导流程都要补出 `trigger / steps / outputs / exceptions`
 
+#### 第二层Fallback：能力边界不存在
+
+```python
+def infer_test_stressors(process, scenario_type, domain_knowledge):
+    """
+    从流程复杂度和风险点推导约束项、干扰项和评分重点
+    """
+
+    constraints = []
+    interference_items = []
+    scoring_focus = []
+
+    if process.cross_process_dependency == "跨流程":
+        constraints.append("需整合多个流程的信息，形成完整方案")
+        scoring_focus.append("跨流程信息整合")
+
+    if has_multiple_regulation_versions(domain_knowledge, process):
+        constraints.append("需引用最新规程版本，排除已废止版本")
+        interference_items.append("规程有新旧版本并存，需正确引用最新版")
+        scoring_focus.append("版本识别")
+
+    if len(process.actors) > 1:
+        interference_items.append("流程涉及多个角色，责任边界需明确")
+        scoring_focus.append("角色边界和权限意识")
+
+    if has_exception_handling_steps(process):
+        interference_items.append("流程中存在异常情况，需给出备选处理方案")
+        scoring_focus.append("异常处理")
+
+    if has_fuzzy_trigger(process):
+        constraints.append("需合理推断模糊需求，或主动追问澄清")
+        scoring_focus.append("需求澄清")
+
+    return constraints, interference_items, scoring_focus
 ```
-输入层次               Fallback机制
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-SystemDesignDocs       
-│
-├── prd                  → 必须存在（业务目标）
-│   └───────────────────────────────────────── ✗ 不可缺失
-│
-├── architecture         → 必须存在（核心功能）
-│   └───────────────────────────────────────── ✗ 不可缺失
-│
-├── business_processes   
-│   ├── 存在             → 直接提取
-│   └── 不存在           → 从PRD+Architecture推导 ⬅ 第一层Fallback
-│
-├── capability_scope
-│   ├── weak_points存在  → 直接映射约束/干扰
-│   └── 不存在           → 从流程特性推导 ⬅ 第二层Fallback
-│
-└── domain_knowledge     → 可选（填充细节）
+
+**推导要求**：
+- 先推导，再做真实性验证
+- 约束项、干扰项、评分重点必须可追溯到流程风险
+- 不允许为了提高难度而加入不真实的“陷阱”
+
+### 5.2 阶段回退决策流程
+
+双层 Fallback 解决“输入缺失”，阶段回退解决“输出不达标”。后者是 8 阶段流水线真正可执行的关键。
+
+| 当前阶段 | 典型失败原因 | 回退到 | 处理动作 |
+|---------|-------------|-------|---------|
+| Stage 0 | 必须输入缺失、关键冲突未解决 | 停止 | 输出补充建议，不进入下游阶段 |
+| Stage 1 | 业务目标、角色、能力未闭环 | Stage 0 | 补输入或重新解释输入冲突 |
+| Stage 2 | 流程置信度不足、流程不闭环 | Stage 1 | 重新抽取业务对象、角色和能力证据 |
+| Stage 3 | 场景族无法覆盖核心流程 | Stage 2 | 重做流程合并或代表流程选择 |
+| Stage 4 | 题面不真实、蓝图过泛、成功标准缺失 | Stage 3 | 重构场景定义，收紧代表流程 |
+| Stage 5 | 五阶段不可判分、rubric 不可操作 | Stage 4 | 重写题面和成功标准 |
+| Stage 6 | 覆盖盲区、题目重复、难度失衡 | Stage 3 / 4 / 5 | 按问题类型回退重做 |
+| Stage 7 | Markdown 与 JSON 不一致、字段不兼容 | Stage 6 | 回到质检阶段重新发布 |
+
+```python
+def resolve_stage_failure(stage_id, issue_type):
+    rollback_map = {
+        "missing_required_input": "stop",
+        "business_model_not_closed": "stage_0",
+        "low_process_confidence": "stage_1",
+        "scenario_not_covering_processes": "stage_2",
+        "sample_not_realistic": "stage_3",
+        "rubric_not_scorable": "stage_4",
+        "dataset_qc_failed": "stage_3_or_4_or_5",
+        "publish_inconsistent": "stage_6",
+    }
+    return rollback_map[issue_type]
 ```
+
+### 5.3 工件状态机
+
+每份阶段工件必须在 frontmatter 中声明状态，供编排器和人工审核共同使用。
+
+| 状态 | 含义 | 下一步动作 |
+|------|------|-----------|
+| `draft` | 阶段已产出，但尚未通过门禁 | 允许修改，不允许下游消费 |
+| `approved` | 阶段通过，可进入下一阶段 | 写入 `next_stage` |
+| `blocked` | 阶段失败，需要补输入或回退 | 写入 `open_issues` 和 `rollback_to` |
+
+只有 `approved` 状态的工件，才允许作为下游阶段的正式输入。
 
 ---
 
@@ -1192,48 +1176,76 @@ SystemDesignDocs
 |--------|---------|-----------|---------|
 | D001 | 输入来源=历史数据 | 输入来源=设计文档 | 评测应验证设计意图 |
 | D002 | 用户占比→题目难度 | 覆盖范围≠难度 | 两者无因果关系 |
-| D003 | 固定3个题目 | 题目数量动态决定 | 通用框架不应固定 |
-| D004 | 固定流程类别 | 动态提取分类 | 不同系统有不同流程 |
-| D005 | 约束项固定模板 | 动态推导+Fallback | 设计文档可能无weak_points |
-| D006 | 流程定义必须存在 | 双层Fallback | 设计文档可能无流程定义 |
+| D003 | 端到端一次性生成最终题库 | 改为8阶段串行工件流水线 | 需要可追溯、可回退、可审计 |
+| D004 | 中间产物为自由文本 | 统一为 YAML Frontmatter + 固定章节 | 方便下游Agent稳定消费 |
+| D005 | 固定流程类别 | 从流程地图抽象场景族 | 流程列表不是可直接评测的对象 |
+| D006 | 约束项固定模板 | 动态推导 + Fallback | 设计文档可能无 weak_points |
+| D007 | 流程定义必须存在 | 双层Fallback | 设计文档可能无流程定义 |
+| D008 | 最终只保留JSON | 过程工件 + JSON双输出 | 兼顾跑批执行和过程复盘 |
 
 ---
 
 ## 七、Agent Prompt模板
 
 ```markdown
-# 题目生成Agent Prompt模板
+# 题目生成Agent Prompt模板（编排器）
 
-你是一个"评测设计师"，负责基于智能系统设计文档生成统一题。
+你是一个"评测数据集编排Agent"，负责将业务PRD/设计文档逐阶段转换为评测数据集。
+
+## 工作方式
+
+1. 严格按 Stage 0-7 串行执行，不允许跳阶段。
+2. 每个阶段只输出一份 Markdown 工件，文件名固定：
+   `00_input_assessment.md` -> `07_final_dataset.md`
+3. 每个阶段的 Markdown 必须包含：
+   - YAML frontmatter
+   - `## 输入摘要`
+   - `## 核心结论`
+   - `## 结构化产物`
+   - `## 风险与歧义`
+   - `## 质量检查`
+   - `## 下一阶段使用说明`
+4. 只有当当前工件 `status = approved` 时，才允许进入下一阶段。
+5. 如遇输入缺失，优先使用双层 Fallback；如遇阶段门禁失败，执行阶段回退。
+6. 所有结论必须尽量引用原始文档证据，不允许无依据补全。
 
 ## 输入
-你将收到：
-- SystemDesignDocs（PRD、Architecture、可选的business_processes和capability_scope）
-- DomainKnowledge（规程/制度样本，可选）
-- BusinessGoal（业务目标）
 
-## Fallback机制
+你将收到：
+- `SystemDesignDocs`（PRD、Architecture、可选的 `business_processes` 和 `capability_scope`）
+- `DomainKnowledge`（规程/制度/案例样本，可选）
+- `BusinessGoal`（业务目标）
+- `current_stage`
+- `upstream_docs`
+
+## 双层Fallback
 
 ### 第一层Fallback：流程定义不存在
-如果设计文档没有business_processes：
-- 从PRD业务目标+用户群体+Architecture核心功能推导流程
-- 推导公式：流程 = 用户角色 × 核心功能 × 业务目标
-- 推导步骤：触发条件、输出、步骤、参与者
+如果设计文档没有 `business_processes`：
+- 基于 `01_business_model.md` 推导流程
+- 推导公式：`流程 = 用户角色 × 核心能力 × 业务目标`
+- 每个推导流程必须补出：触发条件、输入、步骤、输出、异常分支、证据来源
 
-### 第二层Fallback：能力边界定义不存在
-如果设计文档没有capability_scope或weak_points：
-- 从流程特性推导约束项和干扰项
-- 推导维度：跨流程依赖、规程多版本、参与者层级、输出项数量、触发类型
+### 第二层Fallback：能力边界不存在
+如果设计文档没有 `capability_scope` 或 `weak_points`：
+- 从流程复杂度和场景风险推导约束项、干扰项和评分重点
+- 推导维度：跨流程依赖、规程多版本、参与者层级、异常处理、模糊触发条件
+- 所有推导结果必须通过业务真实性验证
 
-## 核心原则
+## 各阶段最低输出要求
 
-1. **覆盖范围≠题目难度**：题目数量=流程类型数量，动态决定
-2. **业务闭环**：每个题目都走完五阶段
-3. **难度调节**：通过约束项/干扰项调节复杂度
-4. **业务真实性验证**：所有推导必须验证业务真实性
+- Stage 0：必须得出 `go_no_go`
+- Stage 1：必须完成业务目标、用户角色、核心能力闭环
+- Stage 2：必须输出标准化 `processes[]`
+- Stage 3：必须输出 `scenario_types[]` 和代表流程
+- Stage 4：必须输出可落题的 `sample_blueprints[]`
+- Stage 5：必须输出五阶段期望行为和 `rubric`
+- Stage 6：必须输出 `release_decision`
+- Stage 7：必须输出 `07_final_dataset.md` 和最终 JSON 导出路径
 
-## 输出
-输出N个统一题（JSON格式）+ 五阶段期望行为 + 验证报告
+## 最终目标
+
+输出一套可追溯的阶段工件，以及一份可直接送入跑批评测引擎的数据集 JSON。
 ```
 
 ---
@@ -1492,39 +1504,43 @@ def calculate_discrimination_index(test_id, all_system_results):
 ### 9.1 跑批引擎架构
 
 ```
-题目生成Agent输出                 跑批引擎                        报告生成
-┌──────────────┐           ┌─────────────────┐           ┌─────────────┐
-│ 标准化数据集   │──────────>│   并发调度器      │──────────>│  原始结果     │
-│ (JSON)       │           │                 │           │  (JSONL)    │
-└──────────────┘           │  ┌───────────┐  │           └──────┬──────┘
-                           │  │ Worker 1  │  │                  │
-┌──────────────┐           │  ├───────────┤  │           ┌──────v──────┐
-│ 被测系统配置   │──────────>│  │ Worker 2  │  │──────────>│  三层评判引擎 │
-│ (API端点/URL)│            │  ├───────────┤  │           │             │
-└──────────────┘           │  │ Worker N  │  │           │ L1:规则匹配  │
-                           │  └───────────┘  │           │ L2:LLM Judge│
-                           │                 │           │ L3:人工抽检  │
-                           │ 断点续跑/超时/限流│           └──────┬──────┘
-                           └─────────────────┘                  │
-                                                         ┌──────v──────┐
-                                                         │  报告生成器   │
-                                                         └─────────────┘
+题目生成Agent输出                              跑批引擎                        报告生成
+┌─────────────────────────┐           ┌─────────────────┐           ┌─────────────┐
+│ 07_final_dataset.md     │           │   并发调度器      │──────────>│  原始结果     │
+│ + dataset.json          │──────────>│                 │           │  (JSONL)    │
+└─────────────┬───────────┘           │  ┌───────────┐  │           └──────┬──────┘
+              │                       │  │ Worker 1  │  │                  │
+              │ 追溯链路              │  ├───────────┤  │           ┌──────v──────┐
+              ▼                       │  │ Worker 2  │  │──────────>│  三层评判引擎 │
+┌─────────────────────────┐           │  ├───────────┤  │           │             │
+│ 00-06阶段工件MD         │           │  │ Worker N  │  │           │ L1:规则匹配  │
+│ (审计/流程/蓝图/QC)     │           │  └───────────┘  │           │ L2:LLM Judge│
+└─────────────────────────┘           │                 │           │ L3:人工抽检  │
+                                      │ 断点续跑/超时/限流│           └──────┬──────┘
+┌──────────────┐                      └─────────────────┘                  │
+│ 被测系统配置   │────────────────────────────────────────────────────────────┘
+│ (API端点/URL)│
+└──────────────┘
 ```
+
+跑批引擎只强依赖 `dataset.json`，但评测复盘、题目追责和样本迭代必须可回溯到 `00-06` 阶段工件。
 
 ### 9.2 执行流程
 
 ```python
-def run_batch_evaluation(dataset_path, system_config):
+def run_batch_evaluation(final_dataset_package, system_config):
     """
     跑批评测主流程
     """
     
-    # 1. 加载数据集
-    dataset = load_dataset(dataset_path)
+    # 1. 加载最终数据集
+    dataset = load_dataset(final_dataset_package.dataset_json_path)
+    traceability = final_dataset_package.traceability_links
     
     # 2. 环境快照（确保可复现）
     snapshot = {
         "dataset_version": dataset.meta.version,
+        "artifact_version": final_dataset_package.dataset_meta.version,
         "system_version": system_config.version,
         "model_version": system_config.model_id,
         "timestamp": datetime.now().isoformat()
@@ -1541,6 +1557,9 @@ def run_batch_evaluation(dataset_path, system_config):
             system_config=system_config,
             timeout=timeout
         )
+
+        # 逐题保留追溯信息，便于评分异常时快速定位到蓝图/QC阶段
+        result["traceability"] = traceability.get(item.test_id, {})
         
         # 逐条追加写入（断点续跑支持）
         append_result_to_jsonl(result, output_path)
@@ -1673,7 +1692,7 @@ def llm_judge_evaluation(system_output, test_item, n_samples=3):
 | 配对t检验/Wilcoxon | 两个系统版本间差异的统计显著性 | 版本迭代效果验证 |
 | 效应量（Cohen's d） | 差异的实际意义大小 | 不只看p值，还看改进幅度 |
 
-**注意**：本框架设计为N道题（N=流程类型数量），当N较小时（如3-6题），不应过度依赖参数检验，建议使用Bootstrap重采样估计置信区间。
+**注意**：本框架设计为N道题（N=场景族数量），当N较小时（如3-6题），不应过度依赖参数检验，建议使用Bootstrap重采样估计置信区间。
 
 ---
 
@@ -1792,23 +1811,23 @@ AI组件系统功能评测报告
 
 1. **四通道输入来源**是否覆盖主要的评测场景？各通道的最小输入集定义是否合理？
 
-2. **Phase 0 输入预处理**是否有遗漏的检查项？
+2. **8阶段串行流水线**的阶段边界是否清晰？是否足以支持“上一阶段 MD -> 下一阶段 MD”的稳定串联？
 
-3. **双层Fallback机制**是否完整覆盖所有可能的输入缺失场景？
+3. **阶段工件契约**（YAML frontmatter + 固定章节 + 结构化载荷）是否足够让下游 Agent 稳定消费？
 
-4. **动态题目数量**逻辑是否合理（题目数量=流程类型数量）？
+4. **双层Fallback + 阶段回退机制**是否完整覆盖输入缺失和阶段质检失败两类场景？
 
-5. **难度量化矩阵**的6个维度是否足够？阈值划分（1.5/2.3）是否需要调整？
+5. **流程地图 -> 场景族 -> 样本蓝图 -> 参考标准** 这一链条是否足够清晰？是否还有遗漏的中间抽象层？
 
-6. **有效性/区分度/信度**三维度保证机制是否可操作？
+6. **动态题目数量**逻辑是否合理（首轮题目数量=场景族数量）？代表流程选择规则是否充分？
 
-7. **三层评判管道**（规则匹配→LLM Judge→人工抽检）的分工是否合理？
+7. **难度量化矩阵**的6个维度是否足够？阈值划分（1.5/2.3）是否需要调整？
 
-8. **评测报告四层结构**是否满足不同读者（管理层/技术团队/评审专家）的需求？
+8. **有效性/区分度/信度**三维度保证机制是否可操作？
 
-9. **评分细则（Rubric）**的 `evidence_type` 设计（keyword_match / semantic_match / llm_judge）是否覆盖主要评判场景？
+9. **三层评判管道**（规则匹配→LLM Judge→人工抽检）的分工，以及与 `07_final_dataset.md` / `dataset.json` 的衔接是否合理？
 
-10. **一票否决机制**的触发条件是否明确？是否有遗漏的安全红线？
+10. **评分细则（Rubric）**的 `evidence_type` 设计（keyword_match / semantic_match / llm_judge）是否覆盖主要评判场景？一票否决机制是否还有遗漏的安全红线？
 
 ---
 
