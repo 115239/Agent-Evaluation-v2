@@ -1,0 +1,12 @@
+# 本地 LLM 凭证，不进版本库
+.env
+
+# Python
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
+
+# Pipeline 产物
+save/pipeline_run_*
