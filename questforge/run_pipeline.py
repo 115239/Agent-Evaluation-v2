@@ -35,7 +35,7 @@ def main() -> int:
 
     if args.run_id:
         config.RUN_ID = args.run_id
-        config.OUT_DIR = config.REPO_ROOT / "save" / f"pipeline_run_{args.run_id}"
+        config.OUT_DIR = Path(config.__file__).resolve().parent / "datasets" / f"pipeline_run_{args.run_id}"
 
     out_dir = Path(args.out) if args.out else config.ensure_out_dir()
     out_dir.mkdir(parents=True, exist_ok=True)

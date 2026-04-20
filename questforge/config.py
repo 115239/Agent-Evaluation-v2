@@ -57,7 +57,7 @@ SAMPLE_DIR = DATASET_ROOT / "样例数据"
 
 # 产物目录（每次运行一个子目录）
 RUN_ID = os.environ.get("QUESTFORGE_RUN_ID") or datetime.now().strftime("%Y%m%d_%H%M%S")
-OUT_DIR = REPO_ROOT / "save" / f"pipeline_run_{RUN_ID}"
+OUT_DIR = Path(__file__).resolve().parent / "datasets" / f"pipeline_run_{RUN_ID}"
 
 # ========== 业务域 ==========
 DOMAIN = "纪检材料智能审查"
