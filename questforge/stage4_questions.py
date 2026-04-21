@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -28,7 +29,6 @@ from typing import Any
 from . import config
 from .common import Checklist, Section, iso_now, md_table, read_md, truncate, write_md
 from .input_spec import AgentInput, MissingField, MissingInputError
-from .io_utils import extract_local_keywords
 from .llm_client import LLMClient, get_default_client
 
 log = logging.getLogger("questforge.stage4")
@@ -258,8 +258,13 @@ def _generate_one(
                     time.time() - program_start, tid, dur, "; ".join(errs))
         return None, f"schema 校验失败:{'; '.join(errs)}"
 
-    log.info("[Stage4][DIAG] T+%.0fs | API结束 | %s | 耗时=%.0fs | 生成成功",
-             time.time() - program_start, tid, dur)
+    # Step 4.4 本地难度校准(落盘前覆盖,保证 JSONL 与 MD 一致)
+    score, label = _calibrate_difficulty(item, task["test_ctx"], task["rep_process"])
+    item["difficulty_score"] = round(score, 2)
+    item["difficulty"] = label
+
+    log.info("[Stage4][DIAG] T+%.0fs | API结束 | %s | 耗时=%.0fs | 生成成功 | score=%.2f label=%s",
+             time.time() - program_start, tid, dur, score, label)
     return item, ""
 
 
@@ -431,16 +436,28 @@ def _fatal_veto_ok(item: dict[str, Any]) -> bool:
     return bool(rubric.get("fatal_deductions")) and bool(rubric.get("veto_items"))
 
 
-def _constraints_embedded(item: dict[str, Any], test_ctx: dict[str, Any]) -> bool:
-    """每条 Stage 3 constraint 的 top-2 关键词至少命中 1 个于 prompt。"""
+_ID_CODE_RE = re.compile(r"[A-Z]+-\d+")
+
+
+def _constraints_embedded(item: dict[str, Any], test_ctx: dict[str, Any]) -> tuple[bool, list[str]]:
+    """检查 prompt 与每条 constraint 的中文字符重叠 ≥ 0.3。
+
+    Stage 3 的 constraint.text 常含 KB-xxx / BP-xxx 等 ID 码,
+    LLM 不会把这些写进自然口吻 prompt,故先剔除 ID 码再比集合。
+    """
     prompt_txt = item.get("prompt") or ""
+    prompt_chars = {c for c in prompt_txt if "\u4e00" <= c <= "\u9fa5"}
+    missed: list[str] = []
     for c in test_ctx.get("constraints") or []:
-        kws = extract_local_keywords(c.get("text", ""), top_k=2)
-        if not kws:
+        raw = c.get("text", "")
+        cleaned = _ID_CODE_RE.sub("", raw)
+        cchars = {ch for ch in cleaned if "\u4e00" <= ch <= "\u9fa5"}
+        if not cchars:
             continue
-        if not any(kw in prompt_txt for kw in kws):
-            return False
-    return True
+        overlap = len(cchars & prompt_chars) / len(cchars)
+        if overlap < 0.3:
+            missed.append(f"{c.get('id','?')}({overlap:.2f})")
+    return (not missed), missed
 
 
 # ========== MD 渲染 ==========
@@ -636,25 +653,19 @@ def run(stage3_md: Path | str, out_dir: Path | None, agent_input: AgentInput) ->
             ],
         )
 
-    # --- Step 4.4 本地难度校准 ---
+    # --- Step 4.4 本地难度校准已在 _generate_one 内完成;此处仅收集 mismatches ---
     tctx_by_id = {tc["test_id"]: tc for tc in test_contexts}
     mismatches: list[dict[str, Any]] = []
     for item in items:
-        tctx = tctx_by_id.get(item["test_id"])
-        if tctx is None:
-            continue
-        rep = pid2proc.get(item.get("source_process") or "", {})
-        score, label = _calibrate_difficulty(item, tctx, rep)
         planned = (plan_by_tid.get(item["test_id"]) or {}).get("difficulty")
-        item["difficulty_score"] = round(score, 2)
-        item["difficulty"] = label
+        label = item.get("difficulty")
         if planned and label != planned:
             mismatches.append(
                 {
                     "test_id": item["test_id"],
                     "planned": planned,
                     "calibrated": label,
-                    "difficulty_score": item["difficulty_score"],
+                    "difficulty_score": item.get("difficulty_score"),
                 }
             )
 
@@ -682,9 +693,16 @@ def run(stage3_md: Path | str, out_dir: Path | None, agent_input: AgentInput) ->
         "每道 TEST ≥1 fatal_deduction + ≥1 veto_item",
         all(_fatal_veto_ok(it) for it in items),
     )
+
+    # 约束嵌入为软校验,每条 constraint 与 prompt 的中文字符重叠 ≥ 0.3
+    embed_missed: list[tuple[str, list[str]]] = []
+    for it in items:
+        ok, missed = _constraints_embedded(it, tctx_by_id.get(it["test_id"], {}))
+        if not ok:
+            embed_missed.append((it["test_id"], missed))
     checklist.add(
-        "每道 TEST 的 prompt 嵌入所有 Stage 3 约束项关键词",
-        all(_constraints_embedded(it, tctx_by_id.get(it["test_id"], {})) for it in items),
+        "每道 TEST 的 prompt 与 Stage 3 约束字符重叠 ≥ 30%",
+        not embed_missed,
     )
 
     # --- Artifacts ---
@@ -715,6 +733,10 @@ def run(stage3_md: Path | str, out_dir: Path | None, agent_input: AgentInput) ->
     )
 
     remarks_lines: list[str] = []
+    if embed_missed:
+        remarks_lines.append("以下 TEST 的 prompt 与 Stage 3 约束字符重叠不足 30%(值越小越不贴切):")
+        for tid, missed in embed_missed:
+            remarks_lines.append(f"  - {tid}: {', '.join(missed)}")
     if mismatches:
         remarks_lines.append("难度自校准与 Stage 2 规划不一致(本阶段不覆盖 Stage 2,留待 Stage 5 裁决):")
         for m in mismatches:
