@@ -1,0 +1,10 @@
+{
+  "source_channel": "design_doc",
+  "business_goal": "短",
+  "domain": "",
+  "data_dir": "/tmp/nonexistent_dir_abc",
+  "samples": [],
+  "glossary_seed": {},
+  "weak_points": [],
+  "business_processes": []
+}

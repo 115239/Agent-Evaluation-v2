@@ -1,15 +1,18 @@
 """Stage 3 · 仿真数据集构建 + 约束/干扰设计 → 03_context.md
 
-输入：02_plan.md + 四大 xlsx
-输出：OUT_DIR / 03_context.md + stage3_fragments.jsonl + stage3_inverted_index.json
+输入:02_plan.md + 01_understanding.md + AgentInput
+输出:OUT_DIR / 03_context.md + stage3_fragments.jsonl + stage3_inverted_index.json
 
-处理步骤（参考 题目生成Agent设计文档.md §4.5）：
+处理步骤(§4.5):
   3.1 知识资产索引构建
-  3.2 题目 × 资产匹配
+  3.2 题目 × 资产匹配(category 相似度 + LLM 兜底)
   3.3 关键字候选池提取
-  3.4 约束项设计（第二层 Fallback）
-  3.5 干扰项设计（同层 Fallback）
+  3.4 约束项设计(第二层 Fallback,由 LLM 基于流程特性推导)
+  3.5 干扰项设计(同层 Fallback,由 LLM 推导)
   3.6 业务真实性三检验
+
+**本阶段不做任何领域硬编码。** 约束/干扰文本由 LLM 生成;真实性权威词由
+Stage 1 glossary + knowledge_assets.authority + weak_points 动态组装。
 """
 from __future__ import annotations
 
@@ -21,6 +24,7 @@ from typing import Any
 
 from . import config
 from .common import Checklist, IdCounter, Section, iso_now, md_table, read_md, truncate, write_md
+from .input_spec import AgentInput, MissingField, MissingInputError
 from .io_utils import (
     KBFragment,
     build_fragments,
@@ -28,69 +32,143 @@ from .io_utils import (
     extract_local_keywords,
     load_kb,
 )
-from .llm_client import get_default_client
+from .llm_client import LLMClient, get_default_client
 
 log = logging.getLogger("questforge.stage3")
 
-# 由 output.category 反查主资产的规则
-_CATEGORY_TO_KB: dict[str, list[str]] = {
-    "结构化条款": ["KB-001"],
-    "讲话摘要+上下文": ["KB-002"],
-    "理论洞察": ["KB-003"],
-    "实务问答": ["KB-004"],
-    "决策建议": ["KB-001", "KB-004", "KB-002"],
-    "纠错清单": ["KB-001", "KB-004"],
-}
-
 
 # ========== Step 3.1 索引构建 ==========
-def _metadata_of(asset_id: str, row: Any) -> dict[str, Any]:
-    if asset_id == "KB-002":
-        return {
-            "发布时间": str(row.get("发布时间", "")).strip(),
-            "主题": str(row.get("主题", "")).strip(),
-            "数据来源": str(row.get("数据来源", "")).strip(),
-        }
-    if asset_id == "KB-004":
-        return {"来源文档": str(row.get("来源文档", "")).strip()}
-    return {}
+def _metadata_keys_for(asset_card: dict[str, Any]) -> list[str]:
+    """对每个资产挑 2-3 个有效的元信息列:优先时间 / 来源 / 主题。"""
+    cols = asset_card.get("columns") or []
+    hints = ["时间", "日期", "发布", "来源", "出处", "主题", "类别", "type", "date"]
+    picked: list[str] = []
+    for h in hints:
+        for c in cols:
+            if h in c and c not in picked:
+                picked.append(c)
+                break
+    return picked[:3]
 
 
-def _build_all_fragments() -> tuple[list[KBFragment], dict[str, KBFragment], dict[str, list[str]]]:
-    """加载 4 个 xlsx，构造 fragment 列表、按 id 索引、以及 KB→frag_ids 映射。"""
+def _build_all_fragments(knowledge_assets: list[dict[str, Any]]) -> tuple[
+    list[KBFragment], dict[str, KBFragment], dict[str, list[str]], dict[str, dict[str, Any]]
+]:
     all_frags: list[KBFragment] = []
     by_kb: dict[str, list[str]] = {}
-    for asset in config.KB_FILES:
-        df = load_kb(asset["file"], asset["sheet"])
+    asset_by_id: dict[str, dict[str, Any]] = {}
+
+    for asset in knowledge_assets:
+        asset_by_id[asset["id"]] = asset
+        path = Path(asset.get("path") or "")
+        if not path.is_file():
+            log.warning("资产 %s 的 path 不存在,跳过索引", asset["id"])
+            by_kb[asset["id"]] = []
+            continue
+        try:
+            df = load_kb(path, asset["sheet"])
+        except Exception as e:
+            log.warning("加载资产失败 %s:%s", asset["id"], e)
+            by_kb[asset["id"]] = []
+            continue
+
+        # 如果 sample_rows 的 columns 里恰好有,用它生成 metadata 列
+        meta_keys = _metadata_keys_for({"columns": list(df.columns)})
+
+        def _meta(r, keys=meta_keys):
+            return {k: str(r.get(k, "")).strip() for k in keys}
+
         frags = build_fragments(
             df,
             asset_id=asset["id"],
             key_fields=asset["key_fields"],
-            metadata_extractor=lambda r, aid=asset["id"]: _metadata_of(aid, r),
+            metadata_extractor=_meta,
         )
         all_frags.extend(frags)
         by_kb[asset["id"]] = [f.frag_id for f in frags]
         log.info("[Stage3] %s 索引 %d 条 fragment", asset["id"], len(frags))
+
     by_id = {f.frag_id: f for f in all_frags}
-    return all_frags, by_id, by_kb
+    return all_frags, by_id, by_kb, asset_by_id
 
 
 # ========== Step 3.2 题目 × 资产匹配 ==========
-def _match_assets(test: dict[str, Any], rep_process: dict[str, Any]) -> list[str]:
-    """按 output.category → KB 反查，返回主资产 id 列表。按难度裁剪。"""
+def _category_match_score(cat_a: str, cat_b: str) -> float:
+    """基于字符串子串的粗匹配(0-1)。"""
+    a, b = (cat_a or "").strip(), (cat_b or "").strip()
+    if not a or not b:
+        return 0.0
+    if a == b:
+        return 1.0
+    if a in b or b in a:
+        return 0.75
+    sa, sb = set(a), set(b)
+    return len(sa & sb) / max(len(sa | sb), 1)
+
+
+def _match_assets(
+    test: dict[str, Any],
+    rep_process: dict[str, Any],
+    knowledge_assets: list[dict[str, Any]],
+    client: LLMClient,
+) -> list[str]:
+    """按 output.category 与 asset.category 相似度匹配;低置信时调 LLM 裁决。"""
     difficulty = test["difficulty"]
     target_n = config.DIFFICULTY_SAMPLING[difficulty]["primary_assets"]
 
-    categories = [o.get("category", "") for o in rep_process.get("outputs", [])]
-    # 按 output 顺序聚合候选 KB
-    candidates: list[str] = []
-    for cat in categories:
-        for kb in _CATEGORY_TO_KB.get(cat, []):
-            if kb not in candidates:
-                candidates.append(kb)
-    if not candidates:
-        candidates = ["KB-001"]
-    return candidates[:max(target_n, 1)]
+    output_cats = [o.get("category", "") for o in rep_process.get("outputs", [])]
+    # 遍历每个 output 找最佳 asset
+    ranked: list[tuple[str, float]] = []
+    for oc in output_cats:
+        for asset in knowledge_assets:
+            score = _category_match_score(oc, asset.get("category", ""))
+            if score > 0:
+                ranked.append((asset["id"], score))
+
+    # 聚合 score(同 asset 累加)
+    bucket: dict[str, float] = {}
+    for aid, s in ranked:
+        bucket[aid] = bucket.get(aid, 0.0) + s
+
+    top = sorted(bucket.items(), key=lambda kv: kv[1], reverse=True)
+    strong = [aid for aid, s in top if s >= 0.75]
+
+    if len(strong) >= 1:
+        return [aid for aid, _ in top[:target_n]]
+
+    # 无强匹配 → LLM 裁决
+    if client.use_llm:
+        ranked_ids = _llm_rank_assets(client, rep_process, knowledge_assets)
+        if ranked_ids:
+            return ranked_ids[:target_n]
+
+    # 仍无 → 取全部资产前 N 个作为保底,但给调用方返回空提示
+    return [a["id"] for a in knowledge_assets[:target_n]]
+
+
+def _llm_rank_assets(client: LLMClient, rep_process: dict[str, Any], assets: list[dict[str, Any]]) -> list[str]:
+    system = (
+        "你是业务知识工程师。给定一个业务流程与资产卡片列表,"
+        "按'与该流程 outputs 的匹配度'从高到低输出 asset id 列表(JSON)。"
+    )
+    brief_proc = {
+        "name": rep_process.get("name"),
+        "triggers": rep_process.get("triggers"),
+        "outputs": rep_process.get("outputs"),
+    }
+    brief_assets = [
+        {"id": a["id"], "category": a.get("category"), "key_fields": a.get("key_fields")} for a in assets
+    ]
+    user = (
+        f"<process>{json.dumps(brief_proc, ensure_ascii=False)}</process>\n"
+        f"<assets>{json.dumps(brief_assets, ensure_ascii=False)}</assets>\n"
+        '请输出 {"ranked":["KB-xxx", ...]};不要解释。'
+    )
+    out = client.chat_json(system, user, max_tokens=300)
+    if not isinstance(out, dict):
+        return []
+    known = {a["id"] for a in assets}
+    return [x for x in (out.get("ranked") or []) if x in known]
 
 
 def _pick_fragments(
@@ -100,18 +178,15 @@ def _pick_fragments(
     *,
     rep_process: dict[str, Any],
     difficulty: str,
+    domain_hints: set[str],
     rng: random.Random,
 ) -> list[KBFragment]:
-    """从选中的 KB 里抽候选 fragment。优先抽 key_text 包含流程关键词的 fragment，
-    不够再随机补足到 difficulty 指定数量。
-    """
+    """从选中的 KB 里抽候选 fragment。优先命中流程关键词,不够再随机补足。"""
     target_n = config.DIFFICULTY_SAMPLING[difficulty]["candidate_fragments"]
-    # 以流程名 + outputs.name 拼接成查询串，用本地关键字抽取做粗检索
     query_str = " ".join(
-        [rep_process.get("name", "")]
-        + [o.get("name", "") for o in rep_process.get("outputs", [])]
+        [rep_process.get("name", "")] + [o.get("name", "") for o in rep_process.get("outputs", [])]
     )
-    query_kws = extract_local_keywords(query_str, top_k=5)
+    query_kws = extract_local_keywords(query_str, top_k=5, domain_hints=domain_hints)
 
     ranked: list[KBFragment] = []
     seen_ids: set[str] = set()
@@ -119,7 +194,6 @@ def _pick_fragments(
     for aid in asset_ids:
         pool.extend(by_id[fid] for fid in by_kb.get(aid, []))
 
-    # 第一轮：命中关键词优先
     if query_kws:
         for frag in pool:
             if any(kw in frag.key_text for kw in query_kws):
@@ -129,7 +203,6 @@ def _pick_fragments(
             if len(ranked) >= target_n:
                 break
 
-    # 第二轮：随机填充不足
     if len(ranked) < target_n:
         remaining = [f for f in pool if f.frag_id not in seen_ids]
         rng.shuffle(remaining)
@@ -138,24 +211,25 @@ def _pick_fragments(
 
 
 # ========== Step 3.3 关键字候选池 ==========
-def _keyword_pool(fragments: list[KBFragment], difficulty: str, llm_budget: list[int]) -> list[str]:
-    """先用本地启发式，其次对高难度题调 LLM 补强。"""
+def _keyword_pool(
+    fragments: list[KBFragment],
+    difficulty: str,
+    client: LLMClient,
+    llm_budget: list[int],
+    domain_hints: set[str],
+) -> list[str]:
     pool: list[str] = []
     for frag in fragments:
-        pool.extend(extract_local_keywords(frag.key_text, top_k=2))
+        pool.extend(extract_local_keywords(frag.key_text, top_k=2, domain_hints=domain_hints))
 
-    # 仅对 advanced / expert 且预算充足时调 LLM（对齐 0311构建.py 风格）
-    if difficulty in ("advanced", "expert") and llm_budget[0] > 0:
-        client = get_default_client()
-        if client.use_llm and fragments:
-            kw = _llm_extract_keyword(client, fragments[0].key_text)
-            llm_budget[0] -= 1
-            if kw:
-                pool.append(kw)
+    if difficulty in ("advanced", "expert") and llm_budget[0] > 0 and client.use_llm and fragments:
+        kw = _llm_extract_keyword(client, fragments[0].key_text)
+        llm_budget[0] -= 1
+        if kw:
+            pool.append(kw)
 
-    # 去重保序
-    seen = set()
-    dedup = []
+    seen: set[str] = set()
+    dedup: list[str] = []
     for w in pool:
         if w and w not in seen:
             seen.add(w)
@@ -163,213 +237,252 @@ def _keyword_pool(fragments: list[KBFragment], difficulty: str, llm_budget: list
     return dedup[:8]
 
 
-def _llm_extract_keyword(client, text: str) -> str:
-    """对齐 0311构建.py::extract_retrieval_keywords 的 prompt 风格。"""
+def _llm_extract_keyword(client: LLMClient, text: str) -> str:
     system = (
-        "你是纪检领域关键词提取专员，仅从参考列文本抽取 4-8 字、贴合纪检场景的核心短语。"
+        "你是领域关键词提取员,只从参考文本中抽取 1 个 4-8 字、贴合业务场景的核心短语。"
     )
     user = (
-        f"参考列文本：{text[:800]}\n\n"
-        "规则：\n"
-        "1. 只返回 1 个关键词，严禁多条/编号\n"
+        f"参考文本:{text[:800]}\n\n"
+        "规则:\n"
+        "1. 只返回 1 个关键词,严禁多条\n"
         "2. 长度严格 4-8 字\n"
-        "3. 100% 来源于参考列文本，贴合具体纪检场景\n"
-        "4. 禁用'法规 / 条例 / 条款 / 规定 / 案例 / 问题 / 实务 / 处理'等泛词\n"
-        "5. 仅返回短语文本，不要任何解释、标点、换行"
+        "3. 100% 来源于参考文本,贴合具体业务场景\n"
+        "4. 禁用泛词(如'问题/规定/情况/内容')\n"
+        "5. 仅返回短语本身,不要解释、标点或换行"
     )
-    raw = client.chat_text(system, user, temperature=0.3, max_tokens=20)
-    raw = raw.strip()
+    raw = client.chat_text(system, user, temperature=0.3, max_tokens=20).strip()
     if 4 <= len(raw) <= 8 and all("\u4e00" <= c <= "\u9fa5" for c in raw):
         return raw
     return ""
 
 
-# ========== Step 3.4 约束项设计 ==========
-def _derive_constraints(
-    rep_process: dict[str, Any], asset_ids: list[str], counter: IdCounter
+# ========== Step 3.4/3.5 约束项 + 干扰项设计(LLM 生成,维度问卷驱动) ==========
+def _process_feature_profile(
+    rep_process: dict[str, Any], asset_cards: list[dict[str, Any]], weak_points: list[str]
+) -> dict[str, Any]:
+    """从流程特性凝练 5 维度问卷,供 LLM 推导约束/干扰时使用。"""
+    return {
+        "cross_process_dependency": rep_process.get("cross_process_dependency", "单流程"),
+        "actors_levels": sorted({a.get("level", "") for a in rep_process.get("actors", []) if a.get("level")}),
+        "outputs_count": len(rep_process.get("outputs", [])),
+        "triggers": [t.get("type") for t in rep_process.get("triggers", [])],
+        "assets_involved": [
+            {"id": a["id"], "category": a.get("category"), "authority": a.get("authority")} for a in asset_cards
+        ],
+        "weak_points": list(weak_points or []),
+    }
+
+
+def _llm_generate_constraints(
+    client: LLMClient,
+    rep_process: dict[str, Any],
+    asset_cards: list[dict[str, Any]],
+    weak_points: list[str],
+    domain: str,
+    counter: IdCounter,
 ) -> list[dict[str, Any]]:
-    """每条约束文本都内含"权威词"或"领域术语"，确保后续真实性检验能通过。"""
+    system_path = config.REPO_ROOT / "questforge/prompts/stage3_constraints.txt"
+    system = system_path.read_text(encoding="utf-8")
+    profile = _process_feature_profile(rep_process, asset_cards, weak_points)
+    user = (
+        f"<domain>{domain}</domain>\n"
+        f"<process>{json.dumps({'id': rep_process.get('id'), 'name': rep_process.get('name'), 'outputs': rep_process.get('outputs')}, ensure_ascii=False)}</process>\n"
+        f"<feature_profile>{json.dumps(profile, ensure_ascii=False)}</feature_profile>\n"
+        '请输出 {"constraints":[{"text":"string","source":"string"}...]};不要解释。'
+    )
+    out = client.chat_json(system, user, max_tokens=1200)
+    raw = (out.get("constraints") if isinstance(out, dict) else None) or []
     cs: list[dict[str, Any]] = []
-    is_cross = rep_process.get("cross_process_dependency") == "跨流程"
-    outputs = rep_process.get("outputs", [])
-    actors = rep_process.get("actors", [])
-
-    if is_cross:
+    for item in raw:
+        text = (item.get("text") or "").strip()
+        if not text:
+            continue
         cs.append(
             {
                 "id": counter.next(),
-                "text": "跨 2+ 资产必须标注每条结论出处，并依据现行条例版本交叉验证",
-                "source": "跨流程推导",
-            }
-        )
-    if "KB-001" in asset_ids:
-        cs.append(
-            {
-                "id": counter.next(),
-                "text": "必须引用《中国共产党纪律处分条例》现行修订版的条款号与原文",
-                "source": "时效性基础约束",
-            }
-        )
-    if any(a.get("level") == "管理" for a in actors):
-        cs.append(
-            {
-                "id": counter.next(),
-                "text": "需识别审核复核层级的责任边界并保留管理层执纪决策痕迹",
-                "source": "参与者层级推导",
-            }
-        )
-    if len(outputs) > 1:
-        cs.append(
-            {
-                "id": counter.next(),
-                "text": "需完整输出定性、适用条款与量纪档次等全部结论，形成闭环依据",
-                "source": "输出项规则",
-            }
-        )
-    if any(o.get("category") == "纠错清单" for o in outputs):
-        cs.append(
-            {
-                "id": counter.next(),
-                "text": "必须指出文书缺失或错误的引用依据条款，并给出符合现行条例版本的规范表达",
-                "source": "输出项规则",
-            }
-        )
-
-    if not cs:
-        cs.append(
-            {
-                "id": counter.next(),
-                "text": "必须引用具体条款号或文档出处，不得脱离权威依据泛泛而谈",
-                "source": "输出项规则",
+                "text": text,
+                "source": (item.get("source") or "LLM 推导").strip(),
             }
         )
     return cs
 
 
-# ========== Step 3.5 干扰项设计 ==========
-def _derive_interferences(
+def _llm_generate_interferences(
+    client: LLMClient,
     rep_process: dict[str, Any],
-    asset_ids: list[str],
-    fragments: list[KBFragment],
+    asset_cards: list[dict[str, Any]],
+    weak_points: list[str],
+    domain: str,
     difficulty: str,
     counter: IdCounter,
-    rng: random.Random,
 ) -> list[dict[str, Any]]:
-    """按密度规则生成干扰项。expert 必须包含 1 条陷阱（含冲突/过时/看似合理）。"""
+    """按密度规则生成干扰项。expert 必须包含 ≥1 个陷阱型。"""
     n = config.INTERFERENCE_DENSITY[difficulty]
     if n == 0:
         return []
 
-    name = rep_process.get("name", "")
+    system_path = config.REPO_ROOT / "questforge/prompts/stage3_interferences.txt"
+    system = system_path.read_text(encoding="utf-8")
+    profile = _process_feature_profile(rep_process, asset_cards, weak_points)
+    user = (
+        f"<domain>{domain}</domain>\n"
+        f"<process>{json.dumps({'id': rep_process.get('id'), 'name': rep_process.get('name'), 'outputs': rep_process.get('outputs')}, ensure_ascii=False)}</process>\n"
+        f"<feature_profile>{json.dumps(profile, ensure_ascii=False)}</feature_profile>\n"
+        f"<difficulty>{difficulty}</difficulty>\n"
+        f"<target_count>{n}</target_count>\n"
+        f"<trap_required>{'true' if difficulty == 'expert' else 'false'}</trap_required>\n"
+        '请输出 {"interferences":[{"text":"string","trap":bool}...]};陷阱型 text 必须含'
+        f" {config.TRAP_KEYWORDS} 中任一关键词;不要解释。"
+    )
+    out = client.chat_json(system, user, max_tokens=1200)
+    raw = (out.get("interferences") if isinstance(out, dict) else None) or []
     items: list[dict[str, Any]] = []
-
-    candidate_descs = [
-        ("条款冲突：同主题在不同版本《纪律处分条例》中口径不一致，需要依据现行版本裁决", True),
-        ("多版本过时：文件同时存在 2018 旧版与 2024 修订版，部分党纪条款已过时", True),
-        ("看似合理：案情中出现'情节较轻但涉及公款消费'的执纪描述，需结合八项规定精神判定", True),
-        ("跨部门角色混淆：将派驻纪检组与审计部门职责混在一起描述，易干扰执纪判断", False),
-        ("流程异常：案情中故意穿插一条与纪检结论无关的干扰事实，需要识别并忽略", False),
-    ]
-    rng.shuffle(candidate_descs)
-
-    # expert 题必须包含 ≥1 条 trap 型候选（文本含"冲突/过时/看似合理"）
-    if difficulty == "expert":
-        candidate_descs.sort(key=lambda x: not x[1])  # trap 优先
-
-    for desc, is_trap in candidate_descs:
-        if len(items) >= n:
-            break
+    for item in raw[:n]:
+        text = (item.get("text") or "").strip()
+        if not text:
+            continue
+        is_trap = bool(item.get("trap", False)) or any(k in text for k in config.TRAP_KEYWORDS)
         items.append(
             {
                 "id": counter.next(),
-                "text": desc,
+                "text": text,
                 "trap": is_trap,
-                "process_ref": name,
+                "process_ref": rep_process.get("name"),
             }
         )
 
+    # expert 必须至少 1 个陷阱;若 LLM 没给,但文本含关键词则补标
+    if difficulty == "expert" and not any(x["trap"] for x in items):
+        for x in items:
+            if any(k in x["text"] for k in config.TRAP_KEYWORDS):
+                x["trap"] = True
+                break
     return items
 
 
 # ========== Step 3.6 真实性三检验 ==========
-# regulation_support 的权威词白名单：含其一即视为有据可依
-_AUTHORITY_KEYWORDS = [
-    "党纪", "纪律处分条例", "中央八项规定", "八项规定精神", "党中央",
-    "纪检", "监察", "执纪", "问责", "现行修订版", "处分条例",
-    "条款号", "出处", "依据", "四种形态", "处分", "纠错", "规范表达",
-    "引用", "版本", "文书", "规程",
-]
+def _build_authority_keywords(
+    glossary: dict[str, str], knowledge_assets: list[dict[str, Any]], weak_points: list[str]
+) -> list[str]:
+    """动态组装权威词:术语表 + 资产 authority 标签 + weak_points 关键短语。"""
+    kws: set[str] = set()
+    kws.update(k for k in glossary.keys() if k)
+    kws.update(a.get("authority", "") for a in knowledge_assets if a.get("authority"))
+    for wp in weak_points:
+        for kw in extract_local_keywords(wp, top_k=2):
+            kws.add(kw)
+    return sorted(x for x in kws if x)
 
 
 def _realism_check(
     item: dict[str, Any],
     glossary: dict[str, str],
+    authority_keywords: list[str],
     inverted_index: dict[str, list[str]],
+    client: LLMClient,
     llm_budget: list[int],
+    domain: str,
 ) -> dict[str, Any]:
     text = item.get("text", "")
 
-    # 1. regulation_support：含任一权威词 或 在倒排索引里命中任一本地关键字
-    for kw in _AUTHORITY_KEYWORDS:
-        if kw in text:
+    for kw in authority_keywords:
+        if kw and kw in text:
             return {"verified_by": "regulation_support", "matched": kw}
-    for kw in extract_local_keywords(text, top_k=5):
+
+    for kw in extract_local_keywords(text, top_k=5, domain_hints=set(glossary.keys())):
         if kw in inverted_index:
             return {"verified_by": "regulation_support", "matched": kw}
 
-    # 2. commonsense：glossary 术语子串命中（key 或 value）
     for term, defn in glossary.items():
         if term and term in text:
             return {"verified_by": "commonsense", "term": term}
-        # value 命中 4 字以上的字段关键字
         for piece in extract_local_keywords(defn, top_k=2):
-            if piece in text:
+            if piece and piece in text:
                 return {"verified_by": "commonsense", "term": term}
 
-    # 3. llm_judge（可选）
-    if llm_budget[0] > 0:
-        client = get_default_client()
-        if client.use_llm:
-            system = (config.REPO_ROOT / "questforge/prompts/stage3_realism.txt").read_text(encoding="utf-8")
-            user = f"待判定：{text}\n\n领域：{config.DOMAIN}"
-            out = client.chat_json(system, user, temperature=0.0, max_tokens=200)
-            llm_budget[0] -= 1
-            if out.get("verified_by") in {"regulation_support", "commonsense", "llm_judge"}:
-                return {"verified_by": out["verified_by"], "reason": out.get("reason", "")}
+    if llm_budget[0] > 0 and client.use_llm:
+        system_path = config.REPO_ROOT / "questforge/prompts/stage3_realism.txt"
+        system = system_path.read_text(encoding="utf-8").replace("{domain}", domain)
+        user = f"待判定:{text}\n\n领域:{domain}"
+        out = client.chat_json(system, user, temperature=0.0, max_tokens=200)
+        llm_budget[0] -= 1
+        if isinstance(out, dict) and out.get("verified_by") in {"regulation_support", "commonsense", "llm_judge"}:
+            return {"verified_by": out["verified_by"], "reason": out.get("reason", "")}
 
     return {"verified_by": "none"}
 
 
 # ========== 主流程 ==========
-def run(stage2_md: Path | str, out_dir: Path | None = None) -> Path:
-    out_dir = Path(out_dir) if out_dir else config.ensure_out_dir()
+def run(stage2_md: Path | str, out_dir: Path | None, agent_input: AgentInput) -> Path:
+    out_dir = Path(out_dir) if out_dir else config.ensure_out_dir(agent_input.out_dir)
     out_path = out_dir / "03_context.md"
 
-    parsed2 = read_md(stage2_md)
-    artifacts2 = parsed2["artifacts"]
-    processes = artifacts2.get("processes", [])
-    test_plan = artifacts2.get("test_plan", [])
-    process_types = artifacts2.get("process_types", [])
+    # --- 读上游 ---
+    stage2 = read_md(stage2_md)
+    art2 = stage2["artifacts"]
+    processes = art2.get("processes", [])
+    test_plan = art2.get("test_plan", [])
     pid2proc = {p["id"]: p for p in processes}
 
-    # 从 Stage 1 取 glossary（通过 downstream 链）
     stage1_md = Path(stage2_md).parent / "01_understanding.md"
-    glossary: dict[str, str] = {}
-    if stage1_md.exists():
-        glossary = read_md(stage1_md)["artifacts"].get("glossary", {})
-    glossary = glossary or dict(config.DEFAULT_GLOSSARY)
+    if not stage1_md.exists():
+        raise FileNotFoundError(f"缺少上游 {stage1_md},请先跑 Stage 1")
+    art1 = read_md(stage1_md)["artifacts"]
+    glossary: dict[str, str] = art1.get("glossary", {})
+    knowledge_assets: list[dict[str, Any]] = art1.get("knowledge_assets", [])
 
-    # 3.1 索引
+    # --- LLM 必备 ---
+    client = get_default_client()
+    if not client.use_llm:
+        raise MissingInputError(
+            stage="Stage 3 · 仿真数据集构建",
+            report=[
+                MissingField(
+                    field_name="LLM_API_KEY",
+                    why_needed="约束/干扰设计、资产裁决、真实性判定均需 LLM",
+                    suggested_format="配置 .env 里的 LLM_API_KEY",
+                    example="LLM_API_KEY=sk-xxx",
+                )
+            ],
+        )
+
+    # --- 术语表充足性 ---
+    authority_keywords = _build_authority_keywords(glossary, knowledge_assets, agent_input.weak_points)
+    if not authority_keywords:
+        raise MissingInputError(
+            stage="Stage 3 · 仿真数据集构建",
+            report=[
+                MissingField(
+                    field_name="glossary_seed 或 weak_points",
+                    why_needed="真实性三检验需要至少一组'领域权威词',否则所有约束/干扰都会被视为幻觉",
+                    suggested_format="在 example_input.json 补 glossary_seed 或 weak_points",
+                    example='"weak_points": ["版本区分", "权限边界", "跨文档整合"]',
+                )
+            ],
+        )
+
+    # --- 3.1 索引 ---
     log.info("[Stage3] 构建知识索引…")
-    all_frags, by_id, by_kb = _build_all_fragments()
-    inverted_index = build_inverted_index(all_frags)
+    all_frags, by_id, by_kb, asset_by_id = _build_all_fragments(knowledge_assets)
+    inverted_index = build_inverted_index(all_frags, domain_hints=set(glossary.keys()))
     log.info(
-        "[Stage3] 索引共 %d 个 fragment，倒排表 %d 个关键词",
-        len(all_frags),
-        len(inverted_index),
+        "[Stage3] 索引共 %d 个 fragment,倒排表 %d 个关键词", len(all_frags), len(inverted_index)
     )
 
-    # 落盘：fragments 明细 + 倒排索引（不进 MD artifacts，控制 MD 体积）
+    if not all_frags:
+        raise MissingInputError(
+            stage="Stage 3 · 仿真数据集构建",
+            report=[
+                MissingField(
+                    field_name="knowledge_assets.path",
+                    why_needed="所有资产均未产出 fragment;可能是 path 不存在、sheet 错误或 key_fields 未命中列名",
+                    suggested_format="确认 Stage 1 artifacts 的 path 是有效绝对路径;检查 sheet 名与 key_fields",
+                    example="重跑 Stage 1,或手工修正 01_understanding.md 的 knowledge_assets 段",
+                )
+            ],
+        )
+
+    # 落盘
     frag_jsonl = out_dir / "stage3_fragments.jsonl"
     with frag_jsonl.open("w", encoding="utf-8") as f:
         for frag in all_frags:
@@ -387,54 +500,76 @@ def run(stage2_md: Path | str, out_dir: Path | None = None) -> Path:
                 + "\n"
             )
     (out_dir / "stage3_inverted_index.json").write_text(
-        json.dumps(inverted_index, ensure_ascii=False),
-        encoding="utf-8",
+        json.dumps(inverted_index, ensure_ascii=False), encoding="utf-8"
     )
 
-    # 3.2-3.6 为每题组装
+    # --- 3.2-3.6 逐题组装 ---
     rng = random.Random(42)
     llm_kw_budget = [config.MAX_LLM_KEYWORD_CALLS]
     llm_realism_budget = [config.MAX_LLM_KEYWORD_CALLS]
 
     c_counter = IdCounter("C")
     i_counter = IdCounter("I")
+    domain_hints = set(glossary.keys())
 
     test_contexts: list[dict[str, Any]] = []
-    covered_by: dict[str, list[str]] = {a["id"]: [] for a in config.KB_FILES}
+    covered_by: dict[str, list[str]] = {a["id"]: [] for a in knowledge_assets}
     realism_discarded: list[str] = []
 
     for test in test_plan:
         rep = pid2proc[test["source_process"]]
-        asset_ids = _match_assets(test, rep)
-        fragments = _pick_fragments(asset_ids, by_kb, by_id, rep_process=rep, difficulty=test["difficulty"], rng=rng)
+        asset_ids = _match_assets(test, rep, knowledge_assets, client)
+        asset_cards = [asset_by_id[a] for a in asset_ids if a in asset_by_id]
+
+        fragments = _pick_fragments(
+            asset_ids,
+            by_kb,
+            by_id,
+            rep_process=rep,
+            difficulty=test["difficulty"],
+            domain_hints=domain_hints,
+            rng=rng,
+        )
 
         for aid in asset_ids:
             covered_by.setdefault(aid, []).append(test["test_id"])
 
-        keyword_pool = _keyword_pool(fragments, test["difficulty"], llm_kw_budget)
+        keyword_pool = _keyword_pool(fragments, test["difficulty"], client, llm_kw_budget, domain_hints)
 
-        # 干扰 fragment（可选：从其他 KB 随机抽）
-        interference_frag_count = config.DIFFICULTY_SAMPLING[test["difficulty"]][
-            "interference_fragments"
-        ]
         noise_frags: list[KBFragment] = []
+        interference_frag_count = config.DIFFICULTY_SAMPLING[test["difficulty"]]["interference_fragments"]
         if interference_frag_count > 0:
-            other_ids = [
-                fid for kb, fids in by_kb.items() if kb not in asset_ids for fid in fids
-            ]
+            other_ids = [fid for kb, fids in by_kb.items() if kb not in asset_ids for fid in fids]
             rng.shuffle(other_ids)
             noise_frags = [by_id[fid] for fid in other_ids[:interference_frag_count]]
 
-        # 约束 + 干扰
-        raw_constraints = _derive_constraints(rep, asset_ids, c_counter)
-        raw_interferences = _derive_interferences(
-            rep, asset_ids, fragments + noise_frags, test["difficulty"], i_counter, rng
+        # LLM 生成约束/干扰
+        raw_constraints = _llm_generate_constraints(
+            client, rep, asset_cards, agent_input.weak_points, agent_input.domain, c_counter
+        )
+        raw_interferences = _llm_generate_interferences(
+            client, rep, asset_cards, agent_input.weak_points, agent_input.domain, test["difficulty"], i_counter
         )
 
-        # 真实性检验
+        if not raw_constraints:
+            raise MissingInputError(
+                stage="Stage 3 · 仿真数据集构建",
+                report=[
+                    MissingField(
+                        field_name=f"TEST {test['test_id']} 的 constraints",
+                        why_needed="LLM 未返回任何约束项,Pipeline 不自造模板",
+                        suggested_format="在 example_input.json 的 weak_points 追加该题的能力短板提示",
+                        example=(
+                            '"weak_points": ["版本时效性", "跨资产整合", "权限边界"](帮助 LLM 聚焦约束维度)'
+                        ),
+                    )
+                ],
+            )
+
+        # 真实性三检验
         constraints: list[dict[str, Any]] = []
         for c in raw_constraints:
-            r = _realism_check(c, glossary, inverted_index, llm_realism_budget)
+            r = _realism_check(c, glossary, authority_keywords, inverted_index, client, llm_realism_budget, agent_input.domain)
             if r["verified_by"] != "none":
                 constraints.append({**c, "verified_by": r["verified_by"]})
             else:
@@ -442,7 +577,7 @@ def run(stage2_md: Path | str, out_dir: Path | None = None) -> Path:
 
         interferences: list[dict[str, Any]] = []
         for i in raw_interferences:
-            r = _realism_check(i, glossary, inverted_index, llm_realism_budget)
+            r = _realism_check(i, glossary, authority_keywords, inverted_index, client, llm_realism_budget, agent_input.domain)
             if r["verified_by"] != "none":
                 interferences.append({**i, "verified_by": r["verified_by"]})
             else:
@@ -457,11 +592,7 @@ def run(stage2_md: Path | str, out_dir: Path | None = None) -> Path:
                 "difficulty": test["difficulty"],
                 "primary_assets": asset_ids,
                 "fragments": [
-                    {
-                        "frag_id": f.frag_id,
-                        "asset_id": f.asset_id,
-                        "snippet": truncate(f.key_text, 120),
-                    }
+                    {"frag_id": f.frag_id, "asset_id": f.asset_id, "snippet": truncate(f.key_text, 120)}
                     for f in fragments
                 ],
                 "interference_fragments": [
@@ -476,23 +607,25 @@ def run(stage2_md: Path | str, out_dir: Path | None = None) -> Path:
 
     # ==== Artifacts ====
     artifacts_out = {
-        "fallback_status": {"weak_points_present": False},
+        "fallback_status": {"weak_points_present": bool(agent_input.weak_points)},
+        "authority_keywords_count": len(authority_keywords),
         "knowledge_index": {
             a["id"]: {
                 "total_fragments": len(by_kb.get(a["id"], [])),
                 "covered_by": sorted(set(covered_by.get(a["id"], []))),
             }
-            for a in config.KB_FILES
+            for a in knowledge_assets
         },
         "test_contexts": test_contexts,
     }
 
-    # ==== 校验清单（§4.5） ====
+    # ==== 校验清单(§4.5) ====
     checklist = Checklist()
     checklist.add(
         "每道 TEST 至少 1 个约束项",
         all(len(tc["constraints"]) >= 1 for tc in test_contexts),
     )
+
     density_ok = True
     for tc in test_contexts:
         want = config.INTERFERENCE_DENSITY[tc["difficulty"]]
@@ -505,10 +638,8 @@ def run(stage2_md: Path | str, out_dir: Path | None = None) -> Path:
             if got != want:
                 density_ok = False
                 break
-    checklist.add(
-        "basic 0 干扰、advanced 1、expert ≥2 且含 1 陷阱",
-        density_ok,
-    )
+    checklist.add("basic 0 干扰、advanced 1、expert ≥2 且含 1 陷阱", density_ok)
+
     checklist.add(
         "每条约束/干扰通过真实性三检验之一",
         all(
@@ -532,48 +663,51 @@ def run(stage2_md: Path | str, out_dir: Path | None = None) -> Path:
             "Fallback 触发情况",
             md_table(
                 ["项", "状态", "说明"],
-                [["weak_points 存在", "❌", "全部走特性推导"]],
+                [
+                    [
+                        "weak_points 存在",
+                        "✓" if agent_input.weak_points else "✗",
+                        "已提供" if agent_input.weak_points else "全部走流程特性推导(LLM)",
+                    ],
+                ],
             ),
         ),
         Section(
             "知识索引摘要",
             md_table(
-                ["资产", "切片数", "覆盖的 TEST", "关键字池大小(倒排)"],
+                ["资产", "切片数", "覆盖的 TEST"],
                 [
                     [
-                        a["id"] + " " + a["name"],
+                        a["id"],
                         len(by_kb.get(a["id"], [])),
                         ",".join(sorted(set(covered_by.get(a["id"], [])))) or "—",
-                        sum(
-                            1
-                            for kw, fids in inverted_index.items()
-                            if any(fid in set(by_kb.get(a["id"], [])) for fid in fids[:3])
-                        ),
                     ]
-                    for a in config.KB_FILES
+                    for a in knowledge_assets
                 ],
             ),
         ),
         Section(
             "题目上下文设计",
-            "\n\n".join(_render_test_section(tc, pid2proc[t["source_process"]])
-                         for tc, t in zip(test_contexts, test_plan)),
+            "\n\n".join(
+                _render_test_section(tc, pid2proc[t["source_process"]])
+                for tc, t in zip(test_contexts, test_plan)
+            ),
         ),
     ]
 
     summary = (
-        f"为 {len(test_contexts)} 道题建立了知识索引（共 {len(all_frags)} 个 fragment），"
-        f"设计 {sum(len(tc['constraints']) for tc in test_contexts)} 条约束项、"
-        f"{sum(len(tc['interferences']) for tc in test_contexts)} 条干扰项"
-        f"（其中 {sum(1 for tc in test_contexts for i in tc['interferences'] if i.get('trap'))} 条陷阱）。"
-        f"业务真实性通过 {sum(tc['realism_check']['passed'] for tc in test_contexts)} / "
-        f"{sum(tc['realism_check']['total'] for tc in test_contexts)}。"
-        f"第二层 Fallback 已触发（源文档无 weak_points，全部走特性推导）。"
+        f"为 {len(test_contexts)} 道题建立了知识索引(共 {len(all_frags)} 个 fragment),"
+        f"LLM 生成 {sum(len(tc['constraints']) for tc in test_contexts)} 条约束、"
+        f"{sum(len(tc['interferences']) for tc in test_contexts)} 条干扰"
+        f"(其中 {sum(1 for tc in test_contexts for i in tc['interferences'] if i.get('trap'))} 条陷阱)。"
+        f"业务真实性通过 {sum(tc['realism_check']['passed'] for tc in test_contexts)}"
+        f"/{sum(tc['realism_check']['total'] for tc in test_contexts)}。"
+        + ("第二层 Fallback 未触发(用户已提供 weak_points)。" if agent_input.weak_points else "第二层 Fallback 触发(无 weak_points,全部走特性推导)。")
     )
 
     remarks = []
     if realism_discarded:
-        remarks.append("以下候选因真实性验证未通过被丢弃：")
+        remarks.append("以下候选因真实性验证未通过被丢弃:")
         remarks.extend(f"  - {x}" for x in realism_discarded)
 
     frontmatter = {
@@ -582,7 +716,7 @@ def run(stage2_md: Path | str, out_dir: Path | None = None) -> Path:
         "version": "1.0",
         "upstream": "02_plan.md",
         "downstream": "04_tests.md",
-        "domain": config.DOMAIN,
+        "domain": agent_input.domain,
         "created_at": iso_now(),
         "created_by": "agent-stage3",
         "pass_gate": checklist.all_passed(),
@@ -596,7 +730,7 @@ def run(stage2_md: Path | str, out_dir: Path | None = None) -> Path:
         sections=sections,
         artifacts=artifacts_out,
         checklist=checklist,
-        remarks="\n".join(remarks) if remarks else "（无）",
+        remarks="\n".join(remarks) if remarks else "(无)",
     )
     return out_path
 
@@ -604,31 +738,22 @@ def run(stage2_md: Path | str, out_dir: Path | None = None) -> Path:
 def _render_test_section(tc: dict[str, Any], rep_process: dict[str, Any]) -> str:
     lines = [
         f"### {tc['test_id']} ({tc['difficulty']} · {rep_process.get('name','')})",
-        f"- **主资产**：{'、'.join(tc['primary_assets'])}",
-        f"- **核心 fragment**：{'、'.join(f['frag_id'] for f in tc['fragments'])}",
-        f"- **关键字候选**：{'、'.join(tc['keyword_pool']) or '—'}",
-        f"- **约束项**（{len(tc['constraints'])}）：",
+        f"- **主资产**:{'、'.join(tc['primary_assets'])}",
+        f"- **核心 fragment**:{'、'.join(f['frag_id'] for f in tc['fragments'])}",
+        f"- **关键字候选**:{'、'.join(tc['keyword_pool']) or '—'}",
+        f"- **约束项**({len(tc['constraints'])}):",
     ]
     for c in tc["constraints"]:
         lines.append(f"  1. {c['id']} · {c['text']} [来源:{c['source']} · 验证:{c['verified_by']}]")
-    lines.append(f"- **干扰项**（{len(tc['interferences'])}）：")
+    lines.append(f"- **干扰项**({len(tc['interferences'])}):")
     if not tc["interferences"]:
-        lines.append("  - 无（符合 basic 干扰密度=0）")
+        lines.append("  - 无(符合 basic 干扰密度=0)")
     for i in tc["interferences"]:
         trap = "陷阱·" if i.get("trap") else ""
         lines.append(f"  1. {i['id']} · {trap}{i['text']} [验证:{i['verified_by']}]")
     r = tc["realism_check"]
-    lines.append(f"- **真实性验证**：{r['passed']}/{r['total']}")
+    lines.append(f"- **真实性验证**:{r['passed']}/{r['total']}")
     return "\n".join(lines)
 
 
-if __name__ == "__main__":
-    import argparse
-
-    logging.basicConfig(level=config.LOG_LEVEL, format="%(asctime)s %(levelname)s %(name)s | %(message)s")
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--stage2", required=True, help="path to 02_plan.md")
-    parser.add_argument("--out", default=None)
-    args = parser.parse_args()
-    out = run(args.stage2, Path(args.out) if args.out else None)
-    print(f"[Stage3] produced: {out}")
+__all__ = ["run"]
