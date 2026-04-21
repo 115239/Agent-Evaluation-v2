@@ -108,6 +108,29 @@ TRAP_KEYWORDS = ["冲突", "过时", "看似合理"]
 MAX_LLM_KEYWORD_CALLS = 20
 
 
+# ========== Stage 4 参数(与领域无关) ==========
+# 单条题目 LLM 调用并发上限(每题一次调用)
+STAGE4_MAX_WORKERS = LLM_CONCURRENCY
+
+# prompt 长度硬约束(设计文档 §4.6 Step 4.1)
+STAGE4_PROMPT_LEN = (20, 300)
+
+# 五阶段满分权重(设计文档 §4.6 Step 4.3, 固定 2/2/3/2/1)
+STAGE4_STAGE_WEIGHTS: dict[str, float] = {
+    "定义问题": 2.0,
+    "拆解问题": 2.0,
+    "方案生成": 3.0,
+    "执行落地": 2.0,
+    "元认知": 1.0,
+}
+
+# 难度自校准分档(设计文档 §4.6 Step 4.4)
+STAGE4_DIFFICULTY_SCORE_THRESHOLDS = {"basic": 1.5, "advanced": 2.3}
+
+# Stage 4 单题 LLM 最大 token(reference/rubric 较长, 需要比默认更大)
+STAGE4_LLM_MAX_TOKENS = 6000
+
+
 # ========== 日志 ==========
 LOG_LEVEL = os.environ.get("QUESTFORGE_LOG", "INFO")
 
@@ -133,5 +156,10 @@ __all__ = [
     "INTERFERENCE_DENSITY",
     "TRAP_KEYWORDS",
     "MAX_LLM_KEYWORD_CALLS",
+    "STAGE4_MAX_WORKERS",
+    "STAGE4_PROMPT_LEN",
+    "STAGE4_STAGE_WEIGHTS",
+    "STAGE4_DIFFICULTY_SCORE_THRESHOLDS",
+    "STAGE4_LLM_MAX_TOKENS",
     "LOG_LEVEL",
 ]

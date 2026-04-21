@@ -1,4 +1,4 @@
-"""QuestForge Pipeline 入口(Phase 0 + Stage 1-3)。
+"""QuestForge Pipeline 入口(Phase 0 + Stage 1-4)。
 
 用法:
     # 默认示例(纪检示例输入):
@@ -22,7 +22,7 @@ import logging
 import sys
 from pathlib import Path
 
-from . import config, phase0_preprocess, stage1_understanding, stage2_plan, stage3_context
+from . import config, phase0_preprocess, stage1_understanding, stage2_plan, stage3_context, stage4_questions
 from .common import read_md
 from .input_spec import AgentInput, MissingField, MissingInputError
 
@@ -63,7 +63,7 @@ def _default_input_json() -> Path:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="QuestForge Pipeline · Phase 0 + Stage 1-3")
+    parser = argparse.ArgumentParser(description="QuestForge Pipeline · Phase 0 + Stage 1-4")
     parser.add_argument(
         "--input-json",
         default=None,
@@ -74,7 +74,7 @@ def main() -> int:
     parser.add_argument(
         "--only",
         default=None,
-        choices=["stage0", "stage1", "stage2", "stage3"],
+        choices=["stage0", "stage1", "stage2", "stage3", "stage4"],
         help="仅运行指定阶段(上游 MD 必须已存在)",
     )
     args = parser.parse_args()
@@ -111,6 +111,7 @@ def main() -> int:
     stage1_path = effective_out / "01_understanding.md"
     stage2_path = effective_out / "02_plan.md"
     stage3_path = effective_out / "03_context.md"
+    stage4_path = effective_out / "04_tests.md"
 
     try:
         only = args.only  # None 表示跑全链
@@ -140,12 +141,20 @@ def main() -> int:
             log.info("=== Stage 3 · 仿真数据集构建 + 约束/干扰设计 ===")
             stage3_path = stage3_context.run(stage2_path, effective_out, agent_input)
 
+        if only in (None, "stage4"):
+            if not stage3_path.exists():
+                raise FileNotFoundError(f"缺少上游 {stage3_path},请先跑 stage3")
+            _require_pass_gate(stage3_path, "Stage 4 前置校验")
+            log.info("=== Stage 4 · 题目 + 期望 + 评分细则 ===")
+            stage4_path = stage4_questions.run(stage3_path, effective_out, agent_input)
+
         log.info(
-            "[Pipeline] 完成,产物:\n  %s\n  %s\n  %s\n  %s",
+            "[Pipeline] 完成,产物:\n  %s\n  %s\n  %s\n  %s\n  %s",
             phase0_path,
             stage1_path,
             stage2_path,
             stage3_path,
+            stage4_path,
         )
         return EXIT_OK
 
