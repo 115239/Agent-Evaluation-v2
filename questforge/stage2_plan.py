@@ -11,7 +11,6 @@
   2.5 题目规划
   2.6 覆盖矩阵蓝图
 
-**本阶段不做任何领域硬编码。** LLM 失败或输出不足 → MissingInputError。
 """
 from __future__ import annotations
 
@@ -47,6 +46,7 @@ def _transcribe_user_processes(user_bps: list[dict[str, Any]]) -> list[dict[str,
                 "steps": p.get("steps") or [],
                 "outputs": p.get("outputs") or [],
                 "cross_process_dependency": p.get("cross_process_dependency", "单流程"),
+                "depends_on": p.get("depends_on") or [],
                 "inferred": False,
             }
         )
@@ -79,7 +79,9 @@ def _llm_processes(client: LLMClient, artifacts: dict[str, Any]) -> list[dict[st
         '"triggers":[{"type":"string","description":"string"}],'
         '"steps":[{"no":1,"name":"string"}],'
         '"outputs":[{"name":"string","category":"string"}],'
-        '"cross_process_dependency":"单流程|跨流程","inferred":true}]}'
+        '"depends_on":["KB-xxx"],'
+        '"cross_process_dependency":"单流程|跨流程","inferred":true}]}\n'
+        "注意:depends_on 必须引用 knowledge_assets 中已存在的 KB id,列出该流程核心依赖的主要资产。"
     )
     out = client.chat_json(system, user, max_tokens=3000)
     return out.get("processes", []) if isinstance(out, dict) else []
@@ -136,14 +138,20 @@ def _complexity(p: dict[str, Any]) -> float:
 
 
 def _cluster(processes: list[dict[str, Any]]) -> dict[str, list[str]]:
-    buckets: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    buckets: dict[tuple[str, str, str, bool], list[dict[str, Any]]] = {}
     for p in processes:
-        key = (_main_trigger(p), p.get("cross_process_dependency", "单流程"))
+        has_mgmt = any(a.get("level") == "管理" for a in p.get("actors", []) or [])
+        key = (
+            _main_trigger(p),
+            p.get("cross_process_dependency", "单流程"),
+            _main_output_category(p),
+            has_mgmt,
+        )
         buckets.setdefault(key, []).append(p)
 
     clusters: dict[str, list[str]] = {}
     idc = IdCounter("PT")
-    for (_trig, _cross), ps in buckets.items():
+    for key, ps in buckets.items():
         scored = sorted(ps, key=_complexity)
         cmin, cmax = _complexity(scored[0]), _complexity(scored[-1])
         if len(ps) >= 2 and (cmax - cmin) > 0.3:
@@ -237,29 +245,62 @@ def _plan_tests(
                 "assigned_difficulty": difficulty,
             }
         )
-        focus_stages = _derive_focus_stages(difficulty, main_trigger, main_output)
-        test_plan.append(
-            {
-                "test_id": tc.next(),
-                "process_type": pt_id,
-                "source_process": rep_id,
-                "difficulty": difficulty,
-                "focus_stages": focus_stages,
-            }
-        )
+
+        for idx in range(max(1, config.TESTS_PER_TYPE)):
+            focus_stages = _derive_focus_stages(difficulty, main_trigger, main_output, idx)
+            test_plan.append(
+                {
+                    "test_id": tc.next(),
+                    "process_type": pt_id,
+                    "source_process": rep_id,
+                    "difficulty": difficulty,
+                    "focus_stages": focus_stages,
+                    "sample_idx": idx,
+                }
+            )
     return process_types, test_plan
 
 
 # ========== Step 2.6 · 覆盖矩阵蓝图 ==========
-def _derive_focus_stages(difficulty: str, trigger: str, output: str) -> list[str]:
-    """按难度与流程特征选 focus_stages(通用规则)。"""
+def _derive_focus_stages(
+    difficulty: str, trigger: str, output: str, sample_idx: int = 0
+) -> list[str]:
+    """按难度与流程特征选 focus_stages;sample_idx 让同 type 多道题分散焦点。"""
     if difficulty == "expert":
         return list(config.FIVE_STAGES)
+
+    # 特殊分支:输出为纠错/审核类
     if any(kw in output for kw in ("纠错", "审核", "校对")):
-        return ["执行落地", "元认知"]
+        rota = [
+            ["执行落地", "元认知"],
+            ["方案生成", "执行落地"],
+            ["定义问题", "元认知"],
+        ]
+        return rota[sample_idx % len(rota)]
+
+    # 特殊分支:触发为研判/分析类
     if any(kw in trigger for kw in ("研判", "分析", "决策")):
-        return ["拆解问题", "方案生成"]
-    return ["定义问题"]
+        rota = [
+            ["拆解问题", "方案生成"],
+            ["定义问题", "方案生成"],
+            ["拆解问题", "元认知"],
+        ]
+        return rota[sample_idx % len(rota)]
+
+    # 通用梯度
+    if difficulty == "basic":
+        rota = [
+            ["定义问题"],
+            ["执行落地"],
+            ["拆解问题"],
+        ]
+    else:  # advanced
+        rota = [
+            ["定义问题", "方案生成"],
+            ["拆解问题", "执行落地"],
+            ["方案生成", "元认知"],
+        ]
+    return rota[sample_idx % len(rota)]
 
 
 def _build_coverage_matrix(test_plan: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
@@ -370,9 +411,10 @@ def run(stage1_md: Path | str, out_dir: Path | None, agent_input: AgentInput) ->
         all(t in vocab for t in tr_types if t) or not tr_types,
     )
 
+    expected_tests = len(process_types) * max(1, config.TESTS_PER_TYPE)
     checklist.add(
-        f"聚类后的类型数 = test_plan 题目数({len(process_types)} vs {len(test_plan)})",
-        len(process_types) == len(test_plan),
+        f"test_plan 题目数 = 类型数×每类采样数({len(process_types)}×{config.TESTS_PER_TYPE}={expected_tests} vs {len(test_plan)})",
+        len(test_plan) == expected_tests,
     )
 
     diffs = {t["difficulty"] for t in test_plan}
@@ -390,7 +432,8 @@ def run(stage1_md: Path | str, out_dir: Path | None, agent_input: AgentInput) ->
     # ===== 渲染 MD =====
     summary = (
         f"共提取 {len(processes)} 条业务流程({'用户提供' if not fallback_1 else 'LLM 推导'});"
-        f"按'触发-跨流程'组合聚类为 {len(process_types)} 个类型,规划 {len(test_plan)} 道题:"
+        f"按'触发×跨流程×输出×管理层'组合聚类为 {len(process_types)} 个类型,"
+        f"每类采样 {config.TESTS_PER_TYPE} 题,共规划 {len(test_plan)} 道:"
         + "、".join(
             f"{len([t for t in test_plan if t['difficulty']==d])} {d}"
             for d in ("basic", "advanced", "expert")

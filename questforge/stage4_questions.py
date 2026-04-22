@@ -9,11 +9,9 @@
   4.3 评分细则生成(LLM 输出;权重 2/2/3/2/1,含 ≥1 fatal_deduction + ≥1 veto_item)
   4.4 难度自校准(纯本地计算,6 维量化;与 Stage 2 assigned_difficulty 不一致写备注)
 
-**本阶段不做任何领域硬编码。** 领域词由 Stage 1 glossary 注入 LLM;
+领域词由 Stage 1 glossary 注入 LLM;
 LLM 返空/schema 不合法 → 记入 generation_errors;全部失败 → MissingInputError。
 
-并发/断点续传基础设施参考 data_syn/pipeline/runner.py,但不照搬其
-background/review/enhance/conflict 多阶段管线——§4.6 已自洽。
 """
 from __future__ import annotations
 
@@ -272,6 +270,7 @@ def _generate_one(
 _REQUIRED_STAGES = ("定义问题", "拆解问题", "方案生成", "执行落地", "元认知")
 _REFERENCE_KEYS = ("define_problem", "decompose", "solution", "execution", "metacognition")
 _EVIDENCE_TYPES = {"keyword_match", "semantic_match", "llm_judge"}
+_INTERNAL_ID_RE = re.compile(r"\b(KB|BP|FRAG|UG|FEAT|PT|TEST)-\d+(?:-\d+)?\b")
 
 
 def _validate_item(raw: dict[str, Any], task: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
@@ -336,11 +335,31 @@ def _validate_item(raw: dict[str, Any], task: dict[str, Any]) -> tuple[dict[str,
     if errs:
         return None, errs
 
+    # 防御性 warning:检测 rubric scoring_points.keywords 与 prompt 里是否残留内部 ID
+    _warn_internal_ids(raw, task["test_id"])
+
     # 补齐 source_process 与 inferred(防 LLM 遗漏)
     raw.setdefault("source_process", task["source_process_id"])
     raw.setdefault("inferred", bool(task["rep_process"].get("inferred", False)))
     raw.setdefault("tags", [])
     return raw, []
+
+
+def _warn_internal_ids(item: dict[str, Any], test_id: str) -> None:
+    """LLM 仍可能在 prompt/keywords 里写出 KB-xxx 等代号;打 warning 但不 reject。"""
+    prompt_txt = item.get("prompt") or ""
+    if _INTERNAL_ID_RE.search(prompt_txt):
+        log.warning("[Stage4] %s prompt 仍含内部 ID 代号: %s", test_id,
+                    _INTERNAL_ID_RE.findall(prompt_txt))
+    rubric = item.get("rubric") or {}
+    for s in rubric.get("stages") or []:
+        for p in s.get("scoring_points") or []:
+            for kw in p.get("keywords") or []:
+                if _INTERNAL_ID_RE.search(kw):
+                    log.warning(
+                        "[Stage4] %s rubric.%s.keywords 含内部 ID: %s",
+                        test_id, s.get("stage_name"), kw,
+                    )
 
 
 # ========== 难度自校准(Step 4.4) ==========
@@ -694,16 +713,13 @@ def run(stage3_md: Path | str, out_dir: Path | None, agent_input: AgentInput) ->
         all(_fatal_veto_ok(it) for it in items),
     )
 
-    # 约束嵌入为软校验,每条 constraint 与 prompt 的中文字符重叠 ≥ 0.3
+    # 约束嵌入为软校验(降级为 remark 而非 checklist):某些约束是行为准则型,
+    # 本就不需要字符重叠进 prompt;硬拉 pass_gate 会误杀
     embed_missed: list[tuple[str, list[str]]] = []
     for it in items:
         ok, missed = _constraints_embedded(it, tctx_by_id.get(it["test_id"], {}))
         if not ok:
             embed_missed.append((it["test_id"], missed))
-    checklist.add(
-        "每道 TEST 的 prompt 与 Stage 3 约束字符重叠 ≥ 30%",
-        not embed_missed,
-    )
 
     # --- Artifacts ---
     artifacts_out = {

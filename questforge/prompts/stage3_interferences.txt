@@ -14,6 +14,8 @@
 - 若 trap_required=true,**至少 1 条**为陷阱型——text 必须含 {冲突 | 过时 | 看似合理} 中任一关键词
 - 每条干扰 ≤ 60 字,用中文陈述句
 - **禁止编造不存在的权威来源**(如"某某条例"若不存在就不要用)
+- **text 中严禁出现 `KB-xxx`、`BP-xxx`、`FRAG-xxx`、`UG-xxx`、`FEAT-xxx` 等内部 ID 代号**。
+  用业务语言替代:`KB-xxx` → 资产类别(如"实务问答库");`FRAG-xxx` → "相关条款/案例";`BP-xxx` → "该流程"
 - 若有 weak_points,从其中至少取 1 条转化为干扰
 
 仅输出合法 JSON,格式 {"interferences":[{"text":"...","trap":true/false}]}。

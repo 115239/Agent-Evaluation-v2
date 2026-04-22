@@ -11,7 +11,6 @@
   3.5 干扰项设计(同层 Fallback,由 LLM 推导)
   3.6 业务真实性三检验
 
-**本阶段不做任何领域硬编码。** 约束/干扰文本由 LLM 生成;真实性权威词由
 Stage 1 glossary + knowledge_assets.authority + weak_points 动态组装。
 """
 from __future__ import annotations
@@ -19,6 +18,7 @@ from __future__ import annotations
 import json
 import logging
 import random
+import re
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +35,35 @@ from .io_utils import (
 from .llm_client import LLMClient, get_default_client
 
 log = logging.getLogger("questforge.stage3")
+
+
+# ========== 内部 ID 清洗(避免泄漏到面向用户的题目) ==========
+_INTERNAL_ID_RE = re.compile(r"\b(KB|BP|FRAG|UG|FEAT|PT|TEST|C|I)-\d+(?:-\d+)?\b")
+
+
+def _strip_internal_ids(text: str, asset_by_id: dict[str, dict[str, Any]]) -> str:
+    """把 text 中的内部 ID 代号替换为业务语言。
+
+    - KB-xxx → 该资产的 category(如"结构化条款");找不到则回落"相关资产"
+    - 其他前缀的 ID → 删除代号,上下文通常已含业务词(如"该流程"、"相关片段")
+    """
+    if not text:
+        return text
+
+    def _sub(match: re.Match) -> str:
+        prefix = match.group(1)
+        full = match.group(0)
+        if prefix == "KB" and full in asset_by_id:
+            cat = (asset_by_id[full].get("category") or "").strip()
+            return cat or "相关资产"
+        return ""
+
+    cleaned = _INTERNAL_ID_RE.sub(_sub, text)
+    # 折叠空格,清理多余标点
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
+    cleaned = re.sub(r"(、|,){2,}", lambda m: m.group(0)[0], cleaned)
+    cleaned = re.sub(r"^(、|,|\s)+|(、|,|\s)+$", "", cleaned)
+    return cleaned
 
 
 # ========== Step 3.1 索引构建 ==========
@@ -111,13 +140,39 @@ def _match_assets(
     rep_process: dict[str, Any],
     knowledge_assets: list[dict[str, Any]],
     client: LLMClient,
+    features: list[dict[str, Any]] | None = None,
 ) -> list[str]:
-    """按 output.category 与 asset.category 相似度匹配;低置信时调 LLM 裁决。"""
+    """按多级匹配选主资产:process.depends_on > features 反查 > output.category 子串 > LLM。"""
     difficulty = test["difficulty"]
     target_n = config.DIFFICULTY_SAMPLING[difficulty]["primary_assets"]
+    asset_ids = {a["id"] for a in knowledge_assets}
 
+    # 一级:Stage 2 LLM 直接在 process 上写了 depends_on
+    direct = [x for x in (rep_process.get("depends_on") or []) if x in asset_ids]
+    if direct:
+        return direct[:target_n]
+
+    # 二级:通过 features 反查(feature.name 与 process.name 字符重叠最高者)
+    features = features or []
+    if features:
+        proc_chars = {c for c in rep_process.get("name", "") if "\u4e00" <= c <= "\u9fa5"}
+        best_feat: dict[str, Any] | None = None
+        best_overlap = 0
+        for feat in features:
+            fchars = {c for c in feat.get("name", "") if "\u4e00" <= c <= "\u9fa5"}
+            if not fchars:
+                continue
+            overlap = len(proc_chars & fchars)
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best_feat = feat
+        if best_feat and best_overlap >= 2:
+            dep = [x for x in (best_feat.get("depends_on") or []) if x in asset_ids]
+            if dep:
+                return dep[:target_n]
+
+    # 三级:output.category 子串匹配
     output_cats = [o.get("category", "") for o in rep_process.get("outputs", [])]
-    # 遍历每个 output 找最佳 asset
     ranked: list[tuple[str, float]] = []
     for oc in output_cats:
         for asset in knowledge_assets:
@@ -125,7 +180,6 @@ def _match_assets(
             if score > 0:
                 ranked.append((asset["id"], score))
 
-    # 聚合 score(同 asset 累加)
     bucket: dict[str, float] = {}
     for aid, s in ranked:
         bucket[aid] = bucket.get(aid, 0.0) + s
@@ -136,13 +190,13 @@ def _match_assets(
     if len(strong) >= 1:
         return [aid for aid, _ in top[:target_n]]
 
-    # 无强匹配 → LLM 裁决
+    # 四级:LLM 裁决
     if client.use_llm:
         ranked_ids = _llm_rank_assets(client, rep_process, knowledge_assets)
         if ranked_ids:
             return ranked_ids[:target_n]
 
-    # 仍无 → 取全部资产前 N 个作为保底,但给调用方返回空提示
+    # 仍无 → 取全部资产前 N 个作为保底
     return [a["id"] for a in knowledge_assets[:target_n]]
 
 
@@ -181,33 +235,51 @@ def _pick_fragments(
     domain_hints: set[str],
     rng: random.Random,
 ) -> list[KBFragment]:
-    """从选中的 KB 里抽候选 fragment。优先命中流程关键词,不够再随机补足。"""
-    target_n = config.DIFFICULTY_SAMPLING[difficulty]["candidate_fragments"]
-    query_str = " ".join(
-        [rep_process.get("name", "")] + [o.get("name", "") for o in rep_process.get("outputs", [])]
-    )
-    query_kws = extract_local_keywords(query_str, top_k=5, domain_hints=domain_hints)
+    """从选中的 KB 里抽候选 fragment。按流程多字段抽关键词,按命中数 desc 排序取 top-N。
 
-    ranked: list[KBFragment] = []
-    seen_ids: set[str] = set()
+    命中不足 target_n 时允许返回少于目标数,避免用随机补引入噪声。
+    """
+    target_n = config.DIFFICULTY_SAMPLING[difficulty]["candidate_fragments"]
+
+    # 扩展 query 来源:name + triggers.description + steps.name + outputs.name
+    query_parts: list[str] = [rep_process.get("name", "")]
+    for t in rep_process.get("triggers", []) or []:
+        query_parts.append(t.get("description", "") or "")
+        query_parts.append(t.get("type", "") or "")
+    for s in rep_process.get("steps", []) or []:
+        query_parts.append(s.get("name", "") or "")
+    for o in rep_process.get("outputs", []) or []:
+        query_parts.append(o.get("name", "") or "")
+    query_str = " ".join(p for p in query_parts if p)
+    query_kws = extract_local_keywords(query_str, top_k=12, domain_hints=domain_hints)
+
     pool: list[KBFragment] = []
     for aid in asset_ids:
         pool.extend(by_id[fid] for fid in by_kb.get(aid, []))
 
-    if query_kws:
-        for frag in pool:
-            if any(kw in frag.key_text for kw in query_kws):
-                if frag.frag_id not in seen_ids:
-                    ranked.append(frag)
-                    seen_ids.add(frag.frag_id)
-            if len(ranked) >= target_n:
-                break
+    if not query_kws or not pool:
+        log.warning(
+            "[Stage3] _pick_fragments: query_kws=%d, pool=%d → 无法按关键词排序,取前 %d 个片段",
+            len(query_kws), len(pool), target_n,
+        )
+        return pool[:target_n]
 
-    if len(ranked) < target_n:
-        remaining = [f for f in pool if f.frag_id not in seen_ids]
-        rng.shuffle(remaining)
-        ranked.extend(remaining[: target_n - len(ranked)])
-    return ranked[:target_n]
+    # 打分:命中关键词数越多越靠前
+    scored: list[tuple[int, KBFragment]] = []
+    for frag in pool:
+        hits = sum(1 for kw in query_kws if kw in frag.key_text)
+        if hits > 0:
+            scored.append((hits, frag))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    picked = [f for _, f in scored[:target_n]]
+
+    if len(picked) < target_n:
+        log.warning(
+            "[Stage3] _pick_fragments: 流程 %s 只命中 %d/%d 个相关片段,不做随机补全",
+            rep_process.get("id", "?"), len(picked), target_n,
+        )
+    return picked
 
 
 # ========== Step 3.3 关键字候选池 ==========
@@ -280,21 +352,25 @@ def _llm_generate_constraints(
     weak_points: list[str],
     domain: str,
     counter: IdCounter,
+    difficulty: str,
+    asset_by_id: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
     system_path = config.REPO_ROOT / "questforge/prompts/stage3_constraints.txt"
     system = system_path.read_text(encoding="utf-8")
     profile = _process_feature_profile(rep_process, asset_cards, weak_points)
+    min_n, max_n = config.STAGE3_CONSTRAINT_COUNT.get(difficulty, (3, 4))
     user = (
         f"<domain>{domain}</domain>\n"
         f"<process>{json.dumps({'id': rep_process.get('id'), 'name': rep_process.get('name'), 'outputs': rep_process.get('outputs')}, ensure_ascii=False)}</process>\n"
         f"<feature_profile>{json.dumps(profile, ensure_ascii=False)}</feature_profile>\n"
+        f"<target_count>{min_n}-{max_n}</target_count>\n"
         '请输出 {"constraints":[{"text":"string","source":"string"}...]};不要解释。'
     )
     out = client.chat_json(system, user, max_tokens=1200)
     raw = (out.get("constraints") if isinstance(out, dict) else None) or []
     cs: list[dict[str, Any]] = []
-    for item in raw:
-        text = (item.get("text") or "").strip()
+    for item in raw[:max_n]:
+        text = _strip_internal_ids((item.get("text") or "").strip(), asset_by_id)
         if not text:
             continue
         cs.append(
@@ -315,6 +391,7 @@ def _llm_generate_interferences(
     domain: str,
     difficulty: str,
     counter: IdCounter,
+    asset_by_id: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """按密度规则生成干扰项。expert 必须包含 ≥1 个陷阱型。"""
     n = config.INTERFERENCE_DENSITY[difficulty]
@@ -338,7 +415,7 @@ def _llm_generate_interferences(
     raw = (out.get("interferences") if isinstance(out, dict) else None) or []
     items: list[dict[str, Any]] = []
     for item in raw[:n]:
-        text = (item.get("text") or "").strip()
+        text = _strip_internal_ids((item.get("text") or "").strip(), asset_by_id)
         if not text:
             continue
         is_trap = bool(item.get("trap", False)) or any(k in text for k in config.TRAP_KEYWORDS)
@@ -430,6 +507,7 @@ def run(stage2_md: Path | str, out_dir: Path | None, agent_input: AgentInput) ->
     art1 = read_md(stage1_md)["artifacts"]
     glossary: dict[str, str] = art1.get("glossary", {})
     knowledge_assets: list[dict[str, Any]] = art1.get("knowledge_assets", [])
+    features: list[dict[str, Any]] = art1.get("features", [])
 
     # --- LLM 必备 ---
     client = get_default_client()
@@ -518,7 +596,7 @@ def run(stage2_md: Path | str, out_dir: Path | None, agent_input: AgentInput) ->
 
     for test in test_plan:
         rep = pid2proc[test["source_process"]]
-        asset_ids = _match_assets(test, rep, knowledge_assets, client)
+        asset_ids = _match_assets(test, rep, knowledge_assets, client, features=features)
         asset_cards = [asset_by_id[a] for a in asset_ids if a in asset_by_id]
 
         fragments = _pick_fragments(
@@ -543,12 +621,14 @@ def run(stage2_md: Path | str, out_dir: Path | None, agent_input: AgentInput) ->
             rng.shuffle(other_ids)
             noise_frags = [by_id[fid] for fid in other_ids[:interference_frag_count]]
 
-        # LLM 生成约束/干扰
+        # LLM 生成约束/干扰(按难度控制数量 + 清洗内部 ID)
         raw_constraints = _llm_generate_constraints(
-            client, rep, asset_cards, agent_input.weak_points, agent_input.domain, c_counter
+            client, rep, asset_cards, agent_input.weak_points, agent_input.domain,
+            c_counter, test["difficulty"], asset_by_id,
         )
         raw_interferences = _llm_generate_interferences(
-            client, rep, asset_cards, agent_input.weak_points, agent_input.domain, test["difficulty"], i_counter
+            client, rep, asset_cards, agent_input.weak_points, agent_input.domain,
+            test["difficulty"], i_counter, asset_by_id,
         )
 
         if not raw_constraints:

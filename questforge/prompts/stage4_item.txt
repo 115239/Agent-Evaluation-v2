@@ -17,6 +17,10 @@
 - `basic` 用第一人称简短场景; `advanced` 给出明确业务场景与跨资产线索; `expert` 需要角色设定(如"我是 xx 岗位的 xx…")并嵌入案情细节
 - 所有 `<stage3_test_context>.constraints[].text` 的**核心动作词**(如"引用最新版本"、"标注出处"、"整合跨资产")必须原词出现在 prompt 中
 - 所有 `<stage3_test_context>.interferences[].text` 以叙述性语句混入案情,不得单独列项或加"注意"等提示
+- **prompt 文本不得出现 `KB-xxx`、`BP-xxx`、`FRAG-xxx`、`UG-xxx`、`FEAT-xxx` 等内部 ID 代号**。
+  若 `<stage3_test_context>.constraints[].text` 不小心带了代号(例如"依据 KB-002 最新版本"),
+  你必须在 prompt 中改写为业务语言(如"依据最新官方版本"、"基于实务问答库最新版本")
+- `context.constraints[]` 与 `context.interference_items[]` 在复述 stage3 原文时也需执行同样的去 ID 改写
 
 ## reference 生成要点
 - `define_problem.intent_understanding` = `<source_process>.name` + 显性诉求
@@ -25,6 +29,14 @@
 - `solution.information_sources` = `<stage3_test_context>.fragments` 的 `asset_id` + `frag_id` + snippet 简述
 - `execution.output_format` = `<source_process>.outputs` 的结构化描述
 - `metacognition.source_annotation` = fragment 出处 + 权威词(如版本号);`boundary_awareness` 说明权限/越权提示
+
+## rubric 生成要点
+- `scoring_points[].keywords` **必须是业务短语**(如"中央八项规定精神"、"结构化条款"、"政治口径偏差"),
+  **不得是 `KB-xxx`/`BP-xxx`/`FRAG-xxx`/`UG-xxx`/`FEAT-xxx` 等内部代号**。内部代号会让 `keyword_match`
+  评分时错误地判定语义正确但未用代号的答案。
+- FRAG-ID / KB-ID 可以放到 `scoring_points[].description`(作为出处说明)或 `reference.solution.information_sources`,
+  不要放 keywords
+- `fatal_deductions[].detection_rule` 与 `veto_items[].detection_rule` 同样避免内部 ID,改用业务文本特征
 
 ## 输出硬约束
 - **仅输出合法 JSON**,不要任何解释、注释或 markdown 代码围栏

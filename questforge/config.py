@@ -89,6 +89,9 @@ DIFFICULTY_THRESHOLDS = {"basic": 0.4, "advanced": 0.7}  # 上限,>advanced 即 
 # §4.4 触发类型示例词表(LLM 可扩充)
 TRIGGER_VOCAB = ["知识咨询", "案件研判", "审核复核", "批量处理"]
 
+# 每个 process_type 规划几道题(>=1);通过 QUESTFORGE_TESTS_PER_TYPE 覆盖
+TESTS_PER_TYPE = int(os.environ.get("QUESTFORGE_TESTS_PER_TYPE", "2"))
+
 
 # ========== Stage 3 采样/密度参数(与领域无关) ==========
 # 按难度控制主资产 / 候选 fragment / 干扰 fragment 数量(设计文档 §4.5 Step 3.2)
@@ -96,6 +99,13 @@ DIFFICULTY_SAMPLING = {
     "basic": {"primary_assets": 1, "candidate_fragments": 3, "interference_fragments": 0},
     "advanced": {"primary_assets": 2, "candidate_fragments": 6, "interference_fragments": 2},
     "expert": {"primary_assets": 3, "candidate_fragments": 10, "interference_fragments": 3},
+}
+
+# 按难度控制 LLM 生成的约束数量区间(min, max);避免 basic 题被刷到 advanced 校准
+STAGE3_CONSTRAINT_COUNT = {
+    "basic": (2, 3),
+    "advanced": (3, 4),
+    "expert": (4, 5),
 }
 
 # 干扰密度硬规则(§4.5 Step 3.5)
@@ -152,7 +162,9 @@ __all__ = [
     "FIVE_STAGES",
     "DIFFICULTY_THRESHOLDS",
     "TRIGGER_VOCAB",
+    "TESTS_PER_TYPE",
     "DIFFICULTY_SAMPLING",
+    "STAGE3_CONSTRAINT_COUNT",
     "INTERFERENCE_DENSITY",
     "TRAP_KEYWORDS",
     "MAX_LLM_KEYWORD_CALLS",

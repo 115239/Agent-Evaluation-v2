@@ -3,7 +3,6 @@
 输入:AgentInput(Phase 0 已通过验证)
 输出:OUT_DIR / 01_understanding.md
 
-本阶段**不做任何领域硬编码**。所有推断均经 LLM;LLM 失败或输出不完整时,
 通过 MissingInputError 请求用户补充。
 """
 from __future__ import annotations
