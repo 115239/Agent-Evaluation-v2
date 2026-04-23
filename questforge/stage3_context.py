@@ -250,8 +250,34 @@ def _pick_fragments(
         query_parts.append(s.get("name", "") or "")
     for o in rep_process.get("outputs", []) or []:
         query_parts.append(o.get("name", "") or "")
-    query_str = " ".join(p for p in query_parts if p)
-    query_kws = extract_local_keywords(query_str, top_k=12, domain_hints=domain_hints)
+    query_parts = [p for p in query_parts if p]
+
+    query_kws: list[str] = []
+    for part in query_parts:
+        query_kws.extend(extract_local_keywords(part, top_k=4, domain_hints=domain_hints))
+    query_kws.extend(
+        extract_local_keywords(" ".join(query_parts), top_k=8, domain_hints=domain_hints)
+    )
+
+    dedup_kws: list[str] = []
+    seen_kws: set[str] = set()
+    for kw in query_kws:
+        if kw and kw not in seen_kws:
+            seen_kws.add(kw)
+            dedup_kws.append(kw)
+    query_kws = dedup_kws[:20]
+
+    query_grams: list[str] = []
+    for kw in query_kws:
+        pure = "".join(ch for ch in kw if "\u4e00" <= ch <= "\u9fa5")
+        for n in (2, 3):
+            for i in range(len(pure) - n + 1):
+                gram = pure[i : i + n]
+                if len(set(gram)) == 1:
+                    continue
+                query_grams.append(gram)
+    seen_grams: set[str] = set()
+    query_grams = [g for g in query_grams if not (g in seen_grams or seen_grams.add(g))]
 
     pool: list[KBFragment] = []
     for aid in asset_ids:
@@ -264,15 +290,46 @@ def _pick_fragments(
         )
         return pool[:target_n]
 
-    # 打分:命中关键词数越多越靠前
-    scored: list[tuple[int, KBFragment]] = []
+    # 先走精确关键词命中,命中不足再用 2-3 字短片段模糊补足,避免 query 过长导致全空。
+    scored: list[tuple[tuple[int, int], KBFragment]] = []
     for frag in pool:
-        hits = sum(1 for kw in query_kws if kw in frag.key_text)
-        if hits > 0:
-            scored.append((hits, frag))
+        exact_hits = sum(1 for kw in query_kws if kw in frag.key_text)
+        gram_hits = 0 if exact_hits > 0 else sum(1 for gram in query_grams if gram in frag.key_text)
+        if exact_hits > 0 or gram_hits > 0:
+            scored.append(((exact_hits, gram_hits), frag))
 
     scored.sort(key=lambda x: x[0], reverse=True)
     picked = [f for _, f in scored[:target_n]]
+
+    if len(picked) < target_n:
+        stop_chars = set("的一是在不了和与及对将按由以等中为个类需可该其后前")
+        query_chars = {
+            ch
+            for text in (query_kws + query_parts)
+            for ch in text
+            if "\u4e00" <= ch <= "\u9fa5" and ch not in stop_chars
+        }
+        fuzzy_scored: list[tuple[int, KBFragment]] = []
+        picked_ids = {frag.frag_id for frag in picked}
+        for frag in pool:
+            if frag.frag_id in picked_ids:
+                continue
+            frag_chars = {
+                ch for ch in frag.key_text if "\u4e00" <= ch <= "\u9fa5" and ch not in stop_chars
+            }
+            overlap = len(query_chars & frag_chars)
+            if overlap > 0:
+                fuzzy_scored.append((overlap, frag))
+        fuzzy_scored.sort(key=lambda x: x[0], reverse=True)
+        needed = target_n - len(picked)
+        fuzzy_picked = [frag for _, frag in fuzzy_scored[:needed]]
+        if fuzzy_picked:
+            log.info(
+                "[Stage3] _pick_fragments: 流程 %s 精确命中不足,使用模糊回退补足 %d 条",
+                rep_process.get("id", "?"),
+                len(fuzzy_picked),
+            )
+            picked.extend(fuzzy_picked)
 
     if len(picked) < target_n:
         log.warning(
@@ -445,6 +502,14 @@ def _build_authority_keywords(
     kws: set[str] = set()
     kws.update(k for k in glossary.keys() if k)
     kws.update(a.get("authority", "") for a in knowledge_assets if a.get("authority"))
+    for asset in knowledge_assets:
+        category = (asset.get("category") or "").strip()
+        if category:
+            kws.add(category)
+            kws.update(extract_local_keywords(category, top_k=3))
+        for field in asset.get("key_fields") or []:
+            if field:
+                kws.add(str(field).strip())
     for wp in weak_points:
         for kw in extract_local_keywords(wp, top_k=2):
             kws.add(kw)

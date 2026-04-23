@@ -273,6 +273,21 @@ _EVIDENCE_TYPES = {"keyword_match", "semantic_match", "llm_judge"}
 _INTERNAL_ID_RE = re.compile(r"\b(KB|BP|FRAG|UG|FEAT|PT|TEST)-\d+(?:-\d+)?\b")
 
 
+def _normalize_prompt(text: str) -> str:
+    prompt = re.sub(r"\s+", " ", (text or "").strip())
+    _, phigh = config.STAGE4_PROMPT_LEN
+    if len(prompt) <= phigh:
+        return prompt
+
+    prompt = prompt[:phigh].rstrip()
+    prompt = prompt.rstrip("，,；;。.!！？?、 ")
+    if not prompt.endswith("？"):
+        if len(prompt) >= phigh:
+            prompt = prompt[: phigh - 1].rstrip("，,；;。.!！？?、 ")
+        prompt = prompt + "？"
+    return prompt
+
+
 def _validate_item(raw: dict[str, Any], task: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
     """schema 校验。返回 (item or None, errors)。不做内容改写,只做结构校验。"""
     errs: list[str] = []
@@ -281,7 +296,8 @@ def _validate_item(raw: dict[str, Any], task: dict[str, Any]) -> tuple[dict[str,
         raw["test_id"] = task["test_id"]  # LLM 偶发写错,强制对齐
 
     # prompt 长度
-    prompt = (raw.get("prompt") or "").strip()
+    prompt = _normalize_prompt(raw.get("prompt") or "")
+    raw["prompt"] = prompt
     plow, phigh = config.STAGE4_PROMPT_LEN
     if not (plow <= len(prompt) <= phigh):
         errs.append(f"prompt 长度 {len(prompt)} 不在 [{plow}, {phigh}]")
