@@ -552,7 +552,7 @@ class QualityMetrics:
 
 # 四、核心逻辑流程
 
-> 目标:把"输入一个业务 PRD / 设计文档 + 业务数据" 转化为"可直接跑批的测试数据集(JSON + 兼容纪检样例的 Excel)"这件事,拆成 **5 个串行阶段**。每阶段:
+> 目标:把"输入一个业务 PRD / 设计文档 + 业务数据" 转化为"可直接跑批的测试数据集(JSON + 兼容纪检样例的 Excel)"这件事,拆成 **5 个串行阶段**。其中前半段按 **业务目标 → 业务场景 → 业务流程 → 业务类型** 逐层抽取,后半段完成知识绑定、出题和验证。每阶段:
 
 > - **输入**:上一阶段产出的 MD(+ 本阶段所需的原始物料)
 
@@ -573,13 +573,13 @@ class QualityMetrics:
 │ 规程/制度文档       │     \
 │ 一句话业务目标      │      ↓
 └───────────┘   ┌────────────────┐
-                      │ Stage 1 · 业务理解             │ → 01_understanding.md
+                      │ Stage 1 · 业务目标理解          │ → 01_understanding.md
                       │   (业务目标/用户/功能/业务支撑材料)   │
                       └─────────┬────────┘
                                        ↓
                       ┌────────────────────┐
-                      │ Stage 2 · 业务流程 + 题目规划      │ → 02_plan.md
-                      │   (第一层Fallback / 聚类 / 规划)   │
+                      │ Stage 2 · 逐层抽取 + 题目规划      │ → 02_plan.md
+                      │   (业务目标→场景→流程→类型 / 第一层Fallback)   │
                       └─────────┬──────────┘
                                        ↓
                       ┌──────────────────────┐
@@ -609,9 +609,9 @@ class QualityMetrics:
 ┌─────┬───────────────────────────────────────────────────────────────┬─────────────────────┐
 │  阶段   │                            简要                             │  从抽象→具体的位置  │
 ├─────┼───────────────────────────────────────────────────────────────┼─────────────────────┤
-│ Stage 1 │ 把原始文档变成 5 张结构化的"认知表"                           │ 非结构 → 结构化认知 │
+│ Stage 1 │ 先抽清业务目标,并登记用户/功能/支撑材料                         │ 非结构 → 目标基线   │
 ├─────┼───────────────────────────────────────────────────────────────┼─────────────────────┤
-│ Stage 2 │ 在认知上"推"出流程,再"分"出类型,再"规划"出几道题              │ 认知 → 题目骨架     │
+│ Stage 2 │ 按"业务目标→业务场景→业务流程→业务类型"逐层收敛,再规划题目      │ 目标基线 → 题目骨架 │
 ├─────┼───────────────────────────────────────────────────────────────┼─────────────────────┤
 │ Stage 3 │ 打开业务数据 xlsx,把题目骨架绑到具体条款+片段+关键字+约束干扰 │ 骨架 → 知识绑定     │
 ├─────┼───────────────────────────────────────────────────────────────┼─────────────────────┤
@@ -626,7 +626,7 @@ class QualityMetrics:
 | 阶段 | 上游 | 下游 | 核心字段 |
 | --- | --- | --- | --- |
 | Stage 1 | 源文档 | 02_plan.md | business_goal / user_groups / features / knowledge_assets / glossary |
-| Stage 2 | 01_understanding.md | 03_context.md | processes / process_types / test_plan / coverage_matrix_plan |
+| Stage 2 | 01_understanding.md | 03_context.md | scenarios / processes / process_types / test_plan / coverage_matrix_plan |
 | Stage 3 | 02_plan.md + 业务数据 | 04_tests.md | knowledge_index / test_contexts(fragments/constraints/interferences) |
 | Stage 4 | 03_context.md | 05_report.md | items(prompt/reference/rubric/difficulty) |
 | Stage 5 | 04_tests.md | 最终产物 | validation / dataset_meta + dataset.{json,xlsx} |
@@ -674,7 +674,7 @@ pass_gate: <true | false>   # 下一阶段校验清单是否全部打勾
 
 - `UG-xxx` 用户群体 · `FEAT-xxx` 核心功能 · `KB-xxx` 知识资产 · `FRAG-xxx-yyy` 资产内切片
 
-- `BP-xxx` 业务流程 · `PT-xxx` 流程类型 · `TEST-xxx` 题目
+- `BS-xxx` 业务场景 · `BP-xxx` 业务流程 · `PT-xxx` 业务类型 · `TEST-xxx` 题目
 
 - `C-xxx` 约束项 · `I-xxx` 干扰项
 
@@ -682,11 +682,11 @@ pass_gate: <true | false>   # 下一阶段校验清单是否全部打勾
 
 ---
 
-### 4.3 Stage 1 · 业务理解 → 01_understanding.md
+### 4.3 Stage 1 · 业务目标理解 → 01_understanding.md
 
 #### 目标
 
-把"一堆原始文档"解析成结构化的业务理解。**本阶段不做流程提取**,只做信息识别与归档,为后续阶段奠基。
+把"一堆原始文档"解析成结构化的业务理解,先把**业务目标**抽清楚,并补齐用户、功能、业务支撑材料。**本阶段不做业务场景/业务流程/业务类型抽取**,只做信息识别与归档,为 Stage 2 的逐层抽取奠基。
 
 #### 输入
 
@@ -732,12 +732,12 @@ created_by: agent-stage1
 pass_gate: true
 ---
 
-# Stage 1 · 业务理解
+# Stage 1 · 业务目标理解
 
 ## 摘要
 基于广东电网纪检项目的 PRD 与业务数据样本,识别出 2 类核心用户、4 项核心功能、
 4 类业务数据资产。业务目标聚焦"党纪法规智能检索与定性量纪辅助",
-未发现多源冲突。领域术语表已沉淀 12 条。
+未发现多源冲突。当前仅完成业务目标及支撑材料归档,尚未进入业务场景/业务流程抽取。
 
 ## 业务目标
 | 字段 | 值 |
@@ -860,17 +860,19 @@ pass_gate: true
 
 ---
 
-### 4.4 Stage 2 · 业务流程提取 + 题目规划 → 02_plan.md
+### 4.4 Stage 2 · 业务场景 → 业务流程 → 业务类型 → 题目规划 → 02_plan.md
 
 #### 目标
 
-基于 Stage 1 的业务理解,做三件事:
+基于 Stage 1 的业务理解,按以下链路逐层抽取:
 
-1. **提取或推导**业务流程(**第一层 Fallback** 发生在此)
+1. **先抽业务场景**:明确"谁在什么触发下,为了什么结果使用系统"
 
-1. **聚类**流程(动态发现分类维度,而非预设类别)
+1. **再提取或推导业务流程**(**第一层 Fallback** 发生在此)
 
-1. **规划**题目总数、难度梯度、覆盖矩阵蓝图
+1. **再归纳业务类型**:把相似流程收敛成可评测的类型单元
+
+1. **最后规划题目**:确定题目总数、难度梯度、覆盖矩阵蓝图
 
 #### 输入
 
@@ -878,46 +880,72 @@ pass_gate: true
 
 - 原始 PRD 中可能存在的 `business_processes` 定义段(若无则走 Fallback)
 
+- PRD / 架构文档中的 use case、典型任务、角色职责描述段
+
 #### 处理逻辑
 
-**Step 2.1 — 流程提取 / 推导(第一层 Fallback)**
+**Step 2.1 — 业务场景抽取**
+
+```plaintext
+场景 = 用户角色 × 典型诉求 × 业务目标
+
+for ug in user_groups:
+    从 ug.typical_query / ug.responsibility / PRD use case 中抽取任务意图
+    对齐可支撑该意图的 features / knowledge_assets
+    生成场景卡片:
+        (actor, trigger, user_intent, expected_result, related_features, related_assets)
+
+合并相似场景:
+    意图重合度 ≥ 0.8 且预期结果一致 → 合并
+```
+
+**Step 2.2 — 场景筛选与排序**
+
+- 剔除纯系统内部动作、无法形成业务闭环的伪场景
+
+- 计算 `scenario_score = goal_alignment × business_value × usage_frequency`
+
+- 保留能代表主要业务价值的场景集合,作为后续流程提取母集
+
+**Step 2.3 — 从场景提取 / 推导业务流程(第一层 Fallback)**
 
 ```plaintext
 if 源文档存在 business_processes 段:
-    → 逐条直接转录 (id, name, actors, triggers, steps, outputs),inferred=false
+    → 逐条直接转录 (id, name, scenario_id, actors, triggers, steps, outputs), inferred=false
+    → 将每条流程映射到最接近的 business_scene
 else:
-    → 推导公式: 流程 = 用户角色 × 核心功能 × 业务目标
-      for ug in user_groups:
-          for feat in match(ug.typical_query, features):
-              推导(triggers, steps, outputs, actors, inferred=true)
-    → 合并相似流程(步骤重合度 ≥ 0.8)
+    → 推导公式: 流程 = 业务场景 × 核心功能 × 业务支撑材料
+      for scene in scenarios:
+          选择支撑 scene.expected_result 的 features / assets
+          推导(triggers, steps, outputs, actors, inferred=true)
+
+合并相似流程:
+    步骤重合度 ≥ 0.8 且输出相同 → 合并
 ```
 
-**Step 2.2 — 分类维度动态提取**
+**Step 2.4 — 业务类型归纳**
 
-从全部流程中挑选**区分度 ≥ 2**(即至少出现两种取值)的维度:
+从全部流程中挑选**区分度 ≥ 2**的归类维度:
 
-- 触发类型(知识咨询 / 案件研判 / 审核复核 / 批量处理 ...)
+- 场景目标(条款检索 / 案件研判 / 审核复核 / 批量处理 ...)
 
 - 输出类型(结构化条款 / 决策建议 / 检索片段 / 纠错清单 ...)
 
-- 参与者层级(业务员 / 管理层 / 跨层协同 ...)
-
 - 跨文档依赖度(单文档 / 2-3 文档 / 4+ 文档)
 
-**Step 2.3 — 聚类与类型命名**
+- 决策复杂度(单步定位 / 多步组合 / 综合判断)
 
-按显著维度组合聚类,类型名 = `{主触发类型}-{主输出类型}类`。
+按显著维度组合聚类,类型名 = `{场景主轴}-{输出主轴}类`。
 
-**Step 2.4 — 代表流程选择**
+**Step 2.5 — 代表流程选择**
 
-每类按 `importance = complexity × coverage × business_value` 选 Top 1 作为代表。
+每类按 `importance = business_value × complexity × coverage` 选 Top 1 作为代表流程。
 
-**Step 2.5 — 题目规划**
+**Step 2.6 — 题目规划**
 
-- 题目总数 `N = 流程类型数`
+- 题目总数 `N = 业务类型数`
 
-- 难度按聚类复杂度自动分配:
+- 难度按类型复杂度自动分配:
 
   - `complexity ≤ 0.4` → basic
 
@@ -929,9 +957,9 @@ else:
 
 - `N > 10` → 按业务优先级砍掉重要度最低的类型
 
-**Step 2.6 — 覆盖矩阵蓝图**
+**Step 2.7 — 覆盖矩阵蓝图**
 
-输出 `流程类型 × 五阶段` 的目标矩阵,每格标注"重点 / 常规"——为 Stage 4 的出题重心提供指引,为 Stage 5 的覆盖验证提供基线。
+输出 `业务类型 × 五阶段` 的目标矩阵,每格标注"重点 / 常规"。该矩阵为 Stage 4 的出题重心提供指引,为 Stage 5 的覆盖验证提供基线。
 
 #### 输出 MD 样例
 
@@ -948,42 +976,50 @@ created_by: agent-stage2
 pass_gate: true
 ---
 
-# Stage 2 · 业务流程提取 + 题目规划
+# Stage 2 · 业务场景 → 业务流程 → 业务类型 → 题目规划
 
 ## 摘要
-共提取 6 条业务流程,其中 2 条为直接转录、4 条为推导(inferred=true)。按
-"触发-输出"组合聚类为 4 个类型,规划 4 道题:1 basic + 2 advanced + 1 expert。
-第一层 Fallback 已触发(源文档无流程定义段)。
+先从业务目标拆出 4 个核心业务场景,再基于场景抽取/推导出 6 条业务流程,最终归纳为
+4 个业务类型,规划 4 道题:1 basic + 2 advanced + 1 expert。第一层 Fallback 已触发
+(源文档无流程定义段),因此流程来自"业务场景 × 核心功能 × 业务支撑材料"推导。
 
 ## Fallback 触发情况
 | 项 | 状态 | 说明 |
 |----|------|------|
-| business_processes 段存在 | ❌ | 全部走推导路径 |
+| business_processes 段存在 | ❌ | 全部走场景驱动的推导路径 |
 | capability_scope.weak_points | ❌ | 将在 Stage 3 触发第二层 Fallback |
 
-## 业务流程清单
-| ID | 名称 | 触发 | 参与者 | 步骤数 | 输出 | inferred |
-|----|------|------|--------|--------|------|----------|
-| BP-001 | 党纪条款精确查询 | 知识咨询 | UG-001 | 3 | 条款 + 量纪档次 | true |
-| BP-002 | 总书记讲话主题检索 | 知识咨询 | UG-002 | 3 | 讲话摘要 + 上下文 | true |
-| BP-003 | 定性量纪决策辅助 | 案件研判 | UG-001+UG-002 | 5 | 定性 + 条款 + 档次 | false |
-| BP-004 | 跨文档类案参考 | 案件研判 | UG-001 | 4 | 类案 + 处理方式 | true |
-| BP-005 | 实务案例查询 | 知识咨询 | UG-001 | 3 | 实务问答 | false |
-| BP-006 | 文书纠错 | 审核复核 | UG-002 | 4 | 纠错建议 + 依据 | true |
+## 业务场景清单
+| 场景 ID | 场景名 | 角色 | 触发 | 预期结果 | 关联功能 | inferred |
+|---------|--------|------|------|----------|----------|----------|
+| BS-001 | 条款定位场景 | UG-001 | 遇到具体违纪情形需快速查依据 | 返回准确条款 + 量纪档次 | FEAT-001 | true |
+| BS-002 | 讲话检索场景 | UG-002 | 需围绕专题检索讲话表述 | 返回讲话摘要 + 上下文 | FEAT-002 | true |
+| BS-003 | 量纪研判场景 | UG-001, UG-002 | 需结合案情做定性量纪判断 | 返回条款 + 档次 + 类案支撑 | FEAT-003, FEAT-004 | true |
+| BS-004 | 文书复核场景 | UG-002 | 需审核文书表述是否规范 | 返回纠错建议 + 引用依据 | FEAT-001, FEAT-004 | true |
 
-## 流程分类与代表
-| 类型 ID | 类型名 | 成员 BP | 代表 BP | 复杂度 | 分配难度 |
-|---------|--------|---------|---------|--------|---------|
-| PT-001 | 知识咨询-单文档类 | BP-001, BP-002, BP-005 | BP-001 | 0.30 | basic |
-| PT-002 | 知识咨询-跨文档类 | BP-004 | BP-004 | 0.60 | advanced |
-| PT-003 | 案件研判-综合决策类 | BP-003 | BP-003 | 0.85 | expert |
-| PT-004 | 审核复核-文书纠错类 | BP-006 | BP-006 | 0.55 | advanced |
+## 业务流程清单
+| ID | 场景 ID | 名称 | 触发 | 参与者 | 步骤数 | 输出 | inferred |
+|----|---------|------|------|--------|--------|------|----------|
+| BP-001 | BS-001 | 党纪条款精确查询 | 知识咨询 | UG-001 | 3 | 条款 + 量纪档次 | true |
+| BP-002 | BS-002 | 总书记讲话主题检索 | 知识咨询 | UG-002 | 3 | 讲话摘要 + 上下文 | true |
+| BP-003 | BS-003 | 定性量纪决策辅助 | 案件研判 | UG-001+UG-002 | 5 | 定性 + 条款 + 档次 | true |
+| BP-004 | BS-003 | 跨文档类案参考 | 案件研判 | UG-001 | 4 | 类案 + 处理方式 | true |
+| BP-005 | BS-001 | 实务案例查询 | 知识咨询 | UG-001 | 3 | 实务问答 | true |
+| BP-006 | BS-004 | 文书纠错 | 审核复核 | UG-002 | 4 | 纠错建议 + 依据 | true |
+
+## 业务类型归纳与代表
+| 类型 ID | 类型名 | 核心场景 | 成员 BP | 代表 BP | 复杂度 | 分配难度 |
+|---------|--------|----------|---------|---------|--------|---------|
+| PT-001 | 条款检索-单文档类 | BS-001 | BP-001, BP-005 | BP-001 | 0.30 | basic |
+| PT-002 | 主题检索-跨文档类 | BS-002 | BP-002 | BP-002 | 0.45 | advanced |
+| PT-003 | 案件研判-综合决策类 | BS-003 | BP-003, BP-004 | BP-003 | 0.85 | expert |
+| PT-004 | 审核复核-文书纠错类 | BS-004 | BP-006 | BP-006 | 0.55 | advanced |
 
 ## 题目规划
-| 题号 | 流程类型 | 代表流程 | 难度 | 主轴 |
+| 题号 | 业务类型 | 代表流程 | 难度 | 主轴 |
 |------|---------|---------|------|------|
-| TEST-001 | PT-001 | BP-001 | basic | 验证单文档语义检索准确性 |
-| TEST-002 | PT-002 | BP-004 | advanced | 验证跨文档信息整合 |
+| TEST-001 | PT-001 | BP-001 | basic | 验证单文档条款检索准确性 |
+| TEST-002 | PT-002 | BP-002 | advanced | 验证专题检索与上下文定位 |
 | TEST-003 | PT-003 | BP-003 | expert | 验证定性量纪多步推理 |
 | TEST-004 | PT-004 | BP-006 | advanced | 验证规范性比对与依据引用 |
 
@@ -998,9 +1034,22 @@ pass_gate: true
 ## 结构化数据
 {
   "fallback_status": {"business_processes_present": false, "capability_scope_present": false},
+  "scenarios": [
+    {
+      "id":"BS-001",
+      "name":"条款定位场景",
+      "actors":["UG-001"],
+      "trigger":"遇到具体违纪情形需快速查依据",
+      "user_intent":"快速定位适用条款并判断量纪档次",
+      "expected_result":"返回准确条款、出处和量纪参考",
+      "related_features":["FEAT-001"],
+      "related_assets":["KB-001"],
+      "inferred": true
+    }
+  ],
   "processes": [
     {
-      "id":"BP-001","name":"党纪条款精确查询",
+      "id":"BP-001","scenario_id":"BS-001","name":"党纪条款精确查询",
       "actors":[{"id":"UG-001","role":"纪检监察员","level":"业务"}],
       "triggers":[{"type":"知识咨询","description":"遇到具体违纪情形需查条款"}],
       "steps":[
@@ -1014,7 +1063,7 @@ pass_gate: true
     }
   ],
   "process_types": [
-    {"type_id":"PT-001","name":"知识咨询-单文档类","members":["BP-001","BP-002","BP-005"],"representative":"BP-001","complexity_score":0.30,"assigned_difficulty":"basic"}
+    {"type_id":"PT-001","name":"条款检索-单文档类","core_scenarios":["BS-001"],"members":["BP-001","BP-005"],"representative":"BP-001","complexity_score":0.30,"assigned_difficulty":"basic"}
   ],
   "test_plan": [
     {"test_id":"TEST-001","process_type":"PT-001","source_process":"BP-001","difficulty":"basic","focus_stages":["定义问题"]}
@@ -1025,38 +1074,39 @@ pass_gate: true
 }
 
 ## 下一阶段校验清单
-- [x] 每条 BP 至少 3 个步骤
-- [x] 触发类型取值来自预设词表或 Stage 1 glossary
-- [x] 聚类后的类型数 = test_plan 中的题目数
+- [x] 每个业务目标至少映射 1 个业务场景
+- [x] 每个业务场景都包含 actor / trigger / expected_result
+- [x] 每条 BP 都明确挂接 1 个场景 ID
+- [x] 业务类型数 = test_plan 中的题目数
 - [x] 难度分配覆盖至少 2 个等级
 - [x] 覆盖矩阵蓝图中每道题至少 1 个"重点"阶段
 
 ## 备注与遗留问题
-- BP-003 涉及多规程交叉应用,Stage 3 需为其准备至少 3 份来源文档切片
-- 发现 BP-005 与 BP-001 步骤重合度 0.75,未触发合并阈值 0.80,保留两条
+- BS-003 涉及多规程交叉应用,Stage 3 需为其准备至少 3 份来源文档切片
+- BP-005 与 BP-001 同属 BS-001,步骤重合度 0.75,未触发合并阈值 0.80,保留两条
 ```
 
 #### Agent Prompt 模板
 
 **System**:
 
-> 你是业务流程架构师。根据上游 Stage 1 的业务理解文档,提取或推导业务流程,
-
-> 并规划覆盖这些流程的测试题目方案。
-
-> 
-
+> 你是业务流程架构师。根据上游 Stage 1 的业务理解文档,按
+> "业务目标 → 业务场景 → 业务流程 → 业务类型" 的顺序逐层抽取,
+> 并规划覆盖这些业务类型的测试题目方案。
+>
 > 原则:
-
-> 1. **优先直接提取**:若源文档有流程定义段,直接转录
-
-> 2. **否则推导**:`流程 = 用户角色 × 核心功能 × 业务目标`,inferred=true
-
-> 3. **合并相似流程**:步骤重合度 ≥ 0.8
-
-> 4. **聚类维度**区分度 ≥ 2(即至少 2 个不同取值)
-
-> 5. **题目数 = 聚类类型数**,不自行增减
+>
+> 1. **先抽场景,再抽流程**:禁止直接从功能跳到流程
+>
+> 2. **业务场景必须业务化**:至少包含 actor / trigger / user_intent / expected_result
+>
+> 3. **优先直接提取流程**:若源文档有流程定义段,先映射到业务场景后再转录
+>
+> 4. **否则推导流程**:`流程 = 业务场景 × 核心功能 × 业务支撑材料`,inferred=true
+>
+> 5. **合并相似流程**:步骤重合度 ≥ 0.8
+>
+> 6. **题目数 = 业务类型数**,不自行增减
 
 **User**:
 
@@ -1068,8 +1118,18 @@ pass_gate: true
 
 {
   "fallback_status": {"business_processes_present":"bool","capability_scope_present":"bool"},
+  "scenarios": [{
+    "id":"BS-xxx","name":"string",
+    "actors":["UG-xxx"],
+    "trigger":"string",
+    "user_intent":"string",
+    "expected_result":"string",
+    "related_features":["FEAT-xxx"],
+    "related_assets":["KB-xxx"],
+    "inferred":"bool"
+  }],
   "processes": [{
-    "id":"BP-xxx","name":"string",
+    "id":"BP-xxx","scenario_id":"BS-xxx","name":"string",
     "actors":[{"id":"UG-xxx","role":"string","level":"业务|管理"}],
     "triggers":[{"type":"string","description":"string"}],
     "steps":[{"no":0,"name":"string"}],
@@ -1077,7 +1137,7 @@ pass_gate: true
     "cross_process_dependency":"单流程|跨流程",
     "inferred":"bool"
   }],
-  "process_types":[{"type_id":"PT-xxx","name":"string","members":["BP-xxx"],"representative":"BP-xxx","complexity_score":"0-1","assigned_difficulty":"basic|advanced|expert"}],
+  "process_types":[{"type_id":"PT-xxx","name":"string","core_scenarios":["BS-xxx"],"members":["BP-xxx"],"representative":"BP-xxx","complexity_score":"0-1","assigned_difficulty":"basic|advanced|expert"}],
   "test_plan":[{"test_id":"TEST-xxx","process_type":"PT-xxx","source_process":"BP-xxx","difficulty":"basic|advanced|expert","focus_stages":["五阶段名"]}],
   "coverage_matrix_plan":{"TEST-xxx":{"定义问题":"重点|常规","拆解问题":"重点|常规","方案生成":"重点|常规","执行落地":"重点|常规","元认知":"重点|常规"}}
 }
@@ -2025,14 +2085,15 @@ Fallback逻辑：
 ┌─────────────────────────────────────────────────────────┐
 │ 从PRD推导流程                                            │
 │                                                         │
-│ 推导公式：流程 = 用户角色 × 核心功能 × 业务目标          │
+│ 先抽业务场景,再推导流程                                  │
 │                                                         │
 │ 推导步骤：                                              │
-│ 1. 提取PRD的用户群体（谁用系统）                        │
-│ 2. 提取Architecture的核心功能（系统提供什么）            │
-│ 3. 提取PRD的业务目标（预期产出是什么）                  │
-│ 4. 用户群体需求 × 对应功能 → 推导业务流程              │
-│ 5. 为每个流程推导：触发条件、输出、步骤、参与者        │
+│ 1. 提取PRD的业务目标（预期产出是什么）                  │
+│ 2. 提取PRD中的用户群体与典型诉求（谁在什么情境下使用）  │
+│ 3. 形成业务场景：业务目标 × 用户角色 × 典型诉求        │
+│ 4. 提取Architecture的核心功能与支撑材料                │
+│ 5. 业务场景 × 功能/材料 → 推导业务流程                 │
+│ 6. 为每个流程推导：触发条件、输出、步骤、参与者        │
 └─────────────────────────────────────────────────────────┘
 
 输出：List[BusinessProcess]（标注 inferred=True）
@@ -2082,7 +2143,7 @@ SystemDesignDocs
 │
 ├── business_processes   
 │   ├── 存在             → 直接提取
-│   └── 不存在           → 从PRD+Architecture推导 ⬅ 第一层Fallback
+│   └── 不存在           → 先抽业务场景,再从PRD+Architecture推导流程 ⬅ 第一层Fallback
 │
 ├── capability_scope
 │   ├── weak_points存在  → 直接映射约束/干扰
@@ -2123,8 +2184,9 @@ SystemDesignDocs
 
 ### 第一层Fallback：流程定义不存在
 如果设计文档没有business_processes：
-- 从PRD业务目标+用户群体+Architecture核心功能推导流程
-- 推导公式：流程 = 用户角色 × 核心功能 × 业务目标
+- 先从PRD抽取业务目标、业务场景
+- 再基于业务场景+Architecture核心功能+业务支撑材料推导流程
+- 推导顺序：业务目标 → 业务场景 → 业务流程
 - 推导步骤：触发条件、输出、步骤、参与者
 
 ### 第二层Fallback：能力边界定义不存在
@@ -2730,3 +2792,13 @@ AI组件系统功能评测报告
 1. stage5： banchmark 
 
 1. 小步骤的细节再完善
+
+### 0422会议
+
+1. stage1  核心功能清单       业务流程      之后的约束项
+
+1. 对业务流程进行聚类
+
+业务目标  业务场景  业务流程   业务类型
+
+业务流程细化  

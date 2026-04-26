@@ -5,7 +5,7 @@ version: 1.0
 upstream: 04_tests.md
 downstream: 最终产物
 domain: 纪检材料智能审查
-created_at: 2026-04-23T13:22:16+08:00
+created_at: 2026-04-23T20:43:07+08:00
 created_by: agent-stage5
 pass_gate: false
 ---
@@ -92,7 +92,7 @@ pass_gate: false
         "notes": [
           "角色=一线纪检监察员",
           "真实性=3/3",
-          "metric_hits=党纪条款/条款匹配/影响公正执行公务/执行公务的财物/公正执行公务的"
+          "metric_hits=条款匹配/党纪条款/影响公正执行公务/执行公务的财物/公正执行公务的"
         ]
       },
       "TEST-002": {
@@ -105,7 +105,7 @@ pass_gate: false
         "notes": [
           "角色=一线纪检监察员",
           "真实性=3/3",
-          "metric_hits=定性量纪建议/党纪条款匹配报告/条款匹配报告/党纪条款匹配/党纪条款"
+          "metric_hits=定性量纪建议/党纪条款匹配报告/党纪条款匹配/条款匹配报告/条款匹配"
         ]
       },
       "TEST-003": {
@@ -144,7 +144,7 @@ pass_gate: false
         "notes": [
           "角色=案件审理人员",
           "真实性=5/5",
-          "metric_hits=文书纠错分析报告/纠错分析报告/文书纠错分析/分析报告/纠错分析"
+          "metric_hits=文书纠错分析报告/文书纠错分析/纠错分析报告/分析报告/文书纠错"
         ]
       },
       "TEST-006": {
@@ -157,7 +157,7 @@ pass_gate: false
         "notes": [
           "角色=案件审理人员",
           "真实性=5/5",
-          "metric_hits=文书纠错分析报告/纠错分析报告/文书纠错分析/分析报告/纠错分析"
+          "metric_hits=文书纠错分析报告/文书纠错分析/纠错分析报告/分析报告/文书纠错"
         ]
       }
     },
@@ -599,7 +599,7 @@ pass_gate: false
     "domain": "纪检材料智能审查",
     "business_goal": "为纪检监察员提供党纪法规、总书记讲话、理论文章、实务案例的 AI 语义检索与文书纠错辅助",
     "success_metric": "纪检监察员在3分钟内获得准确党纪依据或定性量纪建议的比率 ≥ 90%",
-    "created_at": "2026-04-23T13:22:16+08:00",
+    "created_at": "2026-04-23T20:43:07+08:00",
     "total_items": 6,
     "difficulty_distribution": {
       "advanced": 2,

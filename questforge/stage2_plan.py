@@ -210,6 +210,40 @@ def _format_type_name(main_trigger: str, main_output: str, cross: str) -> str:
     return f"{main_trigger}-{scope}类"
 
 
+def _member_sampling_novelty(candidate: dict[str, Any], chosen: list[dict[str, Any]]) -> float:
+    """给 cluster 内候选流程打“新颖度”分,优先挑和已选流程更不重合的 source_process。"""
+    if not chosen:
+        return 1.0
+
+    cand_steps = _steps_names(candidate)
+    cand_assets = candidate.get("depends_on") or []
+    cand_output = _main_output_category(candidate)
+    novelty_scores: list[float] = []
+    for other in chosen:
+        step_overlap = _jaccard(cand_steps, _steps_names(other))
+        asset_overlap = _jaccard(cand_assets, other.get("depends_on") or [])
+        output_overlap = 1.0 if cand_output == _main_output_category(other) else 0.0
+        overlap = 0.5 * step_overlap + 0.4 * asset_overlap + 0.1 * output_overlap
+        novelty_scores.append(1 - overlap)
+    return min(novelty_scores)
+
+
+def _ordered_members_for_sampling(members: list[dict[str, Any]], rep_id: str) -> list[dict[str, Any]]:
+    """先放 representative,剩余成员按与已选流程的差异度贪心排序。"""
+    pid2proc = {member["id"]: member for member in members}
+    ordered = [pid2proc[rep_id]]
+    remaining = [member for member in members if member["id"] != rep_id]
+
+    while remaining:
+        best = max(
+            remaining,
+            key=lambda proc: (_member_sampling_novelty(proc, ordered), _complexity(proc)),
+        )
+        ordered.append(best)
+        remaining = [member for member in remaining if member["id"] != best["id"]]
+    return ordered
+
+
 def _plan_tests(
     processes: list[dict[str, Any]], clusters: dict[str, list[str]]
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -235,6 +269,9 @@ def _plan_tests(
             difficulty = "advanced"
             cluster_cx = max(cluster_cx, config.DIFFICULTY_THRESHOLDS["basic"] + 0.05)
 
+        sampled_members = _ordered_members_for_sampling(members, rep_id)
+        planned_tests = min(max(1, config.TESTS_PER_TYPE), len(sampled_members))
+
         process_types.append(
             {
                 "type_id": pt_id,
@@ -243,16 +280,22 @@ def _plan_tests(
                 "representative": rep_id,
                 "complexity_score": round(cluster_cx, 2),
                 "assigned_difficulty": difficulty,
+                "planned_tests": planned_tests,
             }
         )
 
-        for idx in range(max(1, config.TESTS_PER_TYPE)):
-            focus_stages = _derive_focus_stages(difficulty, main_trigger, main_output, idx)
+        for idx, source_proc in enumerate(sampled_members[:planned_tests]):
+            focus_stages = _derive_focus_stages(
+                difficulty,
+                _main_trigger(source_proc),
+                _main_output_category(source_proc),
+                idx,
+            )
             test_plan.append(
                 {
                     "test_id": tc.next(),
                     "process_type": pt_id,
-                    "source_process": rep_id,
+                    "source_process": source_proc["id"],
                     "difficulty": difficulty,
                     "focus_stages": focus_stages,
                     "sample_idx": idx,
@@ -411,9 +454,9 @@ def run(stage1_md: Path | str, out_dir: Path | None, agent_input: AgentInput) ->
         all(t in vocab for t in tr_types if t) or not tr_types,
     )
 
-    expected_tests = len(process_types) * max(1, config.TESTS_PER_TYPE)
+    expected_tests = sum(int(pt.get("planned_tests", 0)) for pt in process_types)
     checklist.add(
-        f"test_plan 题目数 = 类型数×每类采样数({len(process_types)}×{config.TESTS_PER_TYPE}={expected_tests} vs {len(test_plan)})",
+        f"test_plan 题目数与按类型多样性规划一致({expected_tests} vs {len(test_plan)})",
         len(test_plan) == expected_tests,
     )
 
@@ -422,6 +465,12 @@ def run(stage1_md: Path | str, out_dir: Path | None, agent_input: AgentInput) ->
         remarks.append(
             f"难度分配仅覆盖 {sorted(diffs)} 1 级;如需梯度评测,建议补充 business_processes"
             "或调整 features.input/output 以诱导 LLM 推出复杂度差异大的流程"
+        )
+    limited_types = [pt for pt in process_types if pt.get("planned_tests", 0) < max(1, config.TESTS_PER_TYPE)]
+    if limited_types:
+        remarks.append(
+            "以下类型因缺少可拉开独立性的成员流程,未按配置值重复采样:"
+            + "、".join(f"{pt['type_id']}({pt['planned_tests']}/{config.TESTS_PER_TYPE})" for pt in limited_types)
         )
 
     each_has_focus = all(any(v == "重点" for v in row.values()) for row in coverage_matrix.values())
@@ -433,7 +482,7 @@ def run(stage1_md: Path | str, out_dir: Path | None, agent_input: AgentInput) ->
     summary = (
         f"共提取 {len(processes)} 条业务流程({'用户提供' if not fallback_1 else 'LLM 推导'});"
         f"按'触发×跨流程×输出×管理层'组合聚类为 {len(process_types)} 个类型,"
-        f"每类采样 {config.TESTS_PER_TYPE} 题,共规划 {len(test_plan)} 道:"
+        f"按类型多样性实际规划 {len(test_plan)} 道(单类最多 {config.TESTS_PER_TYPE} 道):"
         + "、".join(
             f"{len([t for t in test_plan if t['difficulty']==d])} {d}"
             for d in ("basic", "advanced", "expert")
@@ -489,7 +538,7 @@ def run(stage1_md: Path | str, out_dir: Path | None, agent_input: AgentInput) ->
         Section(
             "流程分类与代表",
             md_table(
-                ["类型 ID", "类型名", "成员 BP", "代表 BP", "复杂度", "分配难度"],
+                ["类型 ID", "类型名", "成员 BP", "代表 BP", "复杂度", "分配难度", "规划题数"],
                 [
                     [
                         pt["type_id"],
@@ -498,6 +547,7 @@ def run(stage1_md: Path | str, out_dir: Path | None, agent_input: AgentInput) ->
                         pt["representative"],
                         pt["complexity_score"],
                         pt["assigned_difficulty"],
+                        pt.get("planned_tests", 0),
                     ]
                     for pt in process_types
                 ],
@@ -506,7 +556,7 @@ def run(stage1_md: Path | str, out_dir: Path | None, agent_input: AgentInput) ->
         Section(
             "题目规划",
             md_table(
-                ["题号", "流程类型", "代表流程", "难度", "focus_stages"],
+                ["题号", "流程类型", "来源流程", "难度", "focus_stages"],
                 [
                     [t["test_id"], t["process_type"], t["source_process"], t["difficulty"], "、".join(t["focus_stages"])]
                     for t in test_plan

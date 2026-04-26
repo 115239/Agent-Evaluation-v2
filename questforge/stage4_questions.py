@@ -256,13 +256,21 @@ def _generate_one(
                     time.time() - program_start, tid, dur, "; ".join(errs))
         return None, f"schema 校验失败:{'; '.join(errs)}"
 
-    # Step 4.4 本地难度校准(落盘前覆盖,保证 JSONL 与 MD 一致)
+    # Step 4.4 本地难度校准:记录校准结果,不覆盖 Stage 2 规划难度。
     score, label = _calibrate_difficulty(item, task["test_ctx"], task["rep_process"])
     item["difficulty_score"] = round(score, 2)
-    item["difficulty"] = label
+    item["calibrated_difficulty"] = label
+    item["difficulty"] = task["difficulty"]
 
-    log.info("[Stage4][DIAG] T+%.0fs | API结束 | %s | 耗时=%.0fs | 生成成功 | score=%.2f label=%s",
-             time.time() - program_start, tid, dur, score, label)
+    log.info(
+        "[Stage4][DIAG] T+%.0fs | API结束 | %s | 耗时=%.0fs | 生成成功 | score=%.2f calibrated=%s planned=%s",
+        time.time() - program_start,
+        tid,
+        dur,
+        score,
+        label,
+        task["difficulty"],
+    )
     return item, ""
 
 
@@ -693,13 +701,13 @@ def run(stage3_md: Path | str, out_dir: Path | None, agent_input: AgentInput) ->
     mismatches: list[dict[str, Any]] = []
     for item in items:
         planned = (plan_by_tid.get(item["test_id"]) or {}).get("difficulty")
-        label = item.get("difficulty")
-        if planned and label != planned:
+        calibrated = item.get("calibrated_difficulty") or item.get("difficulty")
+        if planned and calibrated != planned:
             mismatches.append(
                 {
                     "test_id": item["test_id"],
                     "planned": planned,
-                    "calibrated": label,
+                    "calibrated": calibrated,
                     "difficulty_score": item.get("difficulty_score"),
                 }
             )

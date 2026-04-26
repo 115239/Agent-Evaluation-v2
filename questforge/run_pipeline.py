@@ -163,6 +163,9 @@ def main() -> int:
             _require_pass_gate(stage4_path, "Stage 5 前置校验")
             log.info("=== Stage 5 · 验证 + benchmark ===")
             stage5_path = stage5_finalize.run(stage4_path, effective_out, agent_input)
+            if read_md(stage5_path)["frontmatter"].get("pass_gate") is not True:
+                log.error("[Pipeline] Stage 5 最终验收未通过,请查看 %s", stage5_path)
+                return EXIT_GENERIC_ERROR
 
         log.info(
             "[Pipeline] 完成,产物:\n  %s\n  %s\n  %s\n  %s\n  %s\n  %s",

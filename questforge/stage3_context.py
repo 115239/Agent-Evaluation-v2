@@ -135,6 +135,16 @@ def _category_match_score(cat_a: str, cat_b: str) -> float:
     return len(sa & sb) / max(len(sa | sb), 1)
 
 
+def _rotate_pick(values: list[str], target_n: int, sample_idx: int) -> list[str]:
+    """按 sample_idx 轮转选取,让同类题尽量使用不同资产窗口。"""
+    ordered = list(dict.fromkeys(v for v in values if v))
+    if len(ordered) <= target_n:
+        return ordered
+    start = sample_idx % len(ordered)
+    rotated = ordered[start:] + ordered[:start]
+    return rotated[:target_n]
+
+
 def _match_assets(
     test: dict[str, Any],
     rep_process: dict[str, Any],
@@ -145,12 +155,13 @@ def _match_assets(
     """按多级匹配选主资产:process.depends_on > features 反查 > output.category 子串 > LLM。"""
     difficulty = test["difficulty"]
     target_n = config.DIFFICULTY_SAMPLING[difficulty]["primary_assets"]
+    sample_idx = int(test.get("sample_idx") or 0)
     asset_ids = {a["id"] for a in knowledge_assets}
 
     # 一级:Stage 2 LLM 直接在 process 上写了 depends_on
     direct = [x for x in (rep_process.get("depends_on") or []) if x in asset_ids]
     if direct:
-        return direct[:target_n]
+        return _rotate_pick(direct, target_n, sample_idx)
 
     # 二级:通过 features 反查(feature.name 与 process.name 字符重叠最高者)
     features = features or []
@@ -169,7 +180,7 @@ def _match_assets(
         if best_feat and best_overlap >= 2:
             dep = [x for x in (best_feat.get("depends_on") or []) if x in asset_ids]
             if dep:
-                return dep[:target_n]
+                return _rotate_pick(dep, target_n, sample_idx)
 
     # 三级:output.category 子串匹配
     output_cats = [o.get("category", "") for o in rep_process.get("outputs", [])]
@@ -188,16 +199,16 @@ def _match_assets(
     strong = [aid for aid, s in top if s >= 0.75]
 
     if len(strong) >= 1:
-        return [aid for aid, _ in top[:target_n]]
+        return _rotate_pick([aid for aid, _ in top], target_n, sample_idx)
 
     # 四级:LLM 裁决
     if client.use_llm:
         ranked_ids = _llm_rank_assets(client, rep_process, knowledge_assets)
         if ranked_ids:
-            return ranked_ids[:target_n]
+            return _rotate_pick(ranked_ids, target_n, sample_idx)
 
     # 仍无 → 取全部资产前 N 个作为保底
-    return [a["id"] for a in knowledge_assets[:target_n]]
+    return _rotate_pick([a["id"] for a in knowledge_assets], target_n, sample_idx)
 
 
 def _llm_rank_assets(client: LLMClient, rep_process: dict[str, Any], assets: list[dict[str, Any]]) -> list[str]:
@@ -232,6 +243,8 @@ def _pick_fragments(
     *,
     rep_process: dict[str, Any],
     difficulty: str,
+    sample_idx: int,
+    focus_stages: list[str],
     domain_hints: set[str],
     rng: random.Random,
 ) -> list[KBFragment]:
@@ -250,6 +263,7 @@ def _pick_fragments(
         query_parts.append(s.get("name", "") or "")
     for o in rep_process.get("outputs", []) or []:
         query_parts.append(o.get("name", "") or "")
+    query_parts.extend(s for s in focus_stages if s)
     query_parts = [p for p in query_parts if p]
 
     query_kws: list[str] = []
@@ -288,7 +302,7 @@ def _pick_fragments(
             "[Stage3] _pick_fragments: query_kws=%d, pool=%d → 无法按关键词排序,取前 %d 个片段",
             len(query_kws), len(pool), target_n,
         )
-        return pool[:target_n]
+        return pool[:target_n] if sample_idx == 0 else pool[sample_idx: sample_idx + target_n] or pool[:target_n]
 
     # 先走精确关键词命中,命中不足再用 2-3 字短片段模糊补足,避免 query 过长导致全空。
     scored: list[tuple[tuple[int, int], KBFragment]] = []
@@ -299,7 +313,10 @@ def _pick_fragments(
             scored.append(((exact_hits, gram_hits), frag))
 
     scored.sort(key=lambda x: x[0], reverse=True)
-    picked = [f for _, f in scored[:target_n]]
+    ranked_fragments = [frag for _, frag in scored]
+    max_start = max(0, len(ranked_fragments) - target_n)
+    start = min(sample_idx * max(1, target_n // 2), max_start)
+    picked = ranked_fragments[start : start + target_n]
 
     if len(picked) < target_n:
         stop_chars = set("的一是在不了和与及对将按由以等中为个类需可该其后前")
@@ -670,6 +687,8 @@ def run(stage2_md: Path | str, out_dir: Path | None, agent_input: AgentInput) ->
             by_id,
             rep_process=rep,
             difficulty=test["difficulty"],
+            sample_idx=int(test.get("sample_idx") or 0),
+            focus_stages=list(test.get("focus_stages") or []),
             domain_hints=domain_hints,
             rng=rng,
         )
@@ -735,6 +754,8 @@ def run(stage2_md: Path | str, out_dir: Path | None, agent_input: AgentInput) ->
             {
                 "test_id": test["test_id"],
                 "difficulty": test["difficulty"],
+                "sample_idx": int(test.get("sample_idx") or 0),
+                "focus_stages": list(test.get("focus_stages") or []),
                 "primary_assets": asset_ids,
                 "fragments": [
                     {"frag_id": f.frag_id, "asset_id": f.asset_id, "snippet": truncate(f.key_text, 120)}

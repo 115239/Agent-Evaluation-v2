@@ -615,6 +615,8 @@ def _build_dataset_items(
         }
         if "inferred" in item:
             dataset_item["inferred"] = item.get("inferred")
+        if "calibrated_difficulty" in item:
+            dataset_item["calibrated_difficulty"] = item.get("calibrated_difficulty")
         dataset_items.append(dataset_item)
     return dataset_items
 
