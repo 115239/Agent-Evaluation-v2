@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 QuestForge 是一个"题目生成 Agent"流水线:输入 PRD/设计文档 + 业务数据(xlsx),输出可用于评测业务 AI 系统的测试数据集。设计文档权威版本:`题目生成Agent设计文档.md`(根目录,~100 KB)。
 
-当前实现覆盖 **Phase 0 + Stage 1-3**。Stage 4(题目 + rubric 扩写)与 Stage 5(验证 + 打包)尚未实现.
+当前实现覆盖 **Phase 0 + Stage 1-5**。Stage 4 负责题目、五阶段期望和 rubric 扩写;Stage 5 负责验证、最终 benchmark 打包和 `dataset.{json,xlsx}` 输出.
 
 ## 常用命令
 
@@ -54,6 +54,8 @@ LLM_MODEL=<model id,如 qwen-plus、claude-opus-4.6、gpt-5.4>
 - `stage1_understanding.py` — 扫资产、调 LLM 产"认知五表"(business_goal / user_groups / features / knowledge_assets / glossary)。资产探测用 openpyxl 取行数最多的 sheet。
 - `stage2_plan.py` — 流程提取(LLM 推导或转录用户提供的 `business_processes`)→ 动态分类维度(至少 2 取值才算有效)→ 聚类 → 按 complexity 分难度梯度(`DIFFICULTY_THRESHOLDS`)→ 覆盖矩阵蓝图。
 - `stage3_context.py` — 加载全部 xlsx 建 Fragment + 倒排索引(`io_utils.build_fragments` + `build_inverted_index`);按难度决定主资产数/候选/干扰(`DIFFICULTY_SAMPLING`);约束/干扰由 LLM 生成,过"三检验"过滤合成幻觉。产出 `03_context.md` + `stage3_fragments.jsonl` + `stage3_inverted_index.json`。
+- `stage4_questions.py` — 基于 `03_context.md` 生成完整题目、五阶段期望行为与 10 分制评分细则,产出 `04_tests.md` + `stage4_items.jsonl`。
+- `stage5_finalize.py` — 本地执行 5 设计原则验证、覆盖矩阵对齐、先验区分度和独立性评估,产出 `05_report.md`、`dataset.json`、`dataset.xlsx`、`traceability.json` 与 `dataset_supplementary/`。
 - `io_utils.py` — 领域无关;`KBFragment` 数据类、`extract_local_keywords`(jieba 可选,不可用自动降级)。对应 `datasets/test_agent_2/0311构建.py` 的"原始片段→关键字→用户提问"三步。
 - `llm_client.py` — OpenAI 兼容 SDK 的最小封装,`chat_json` 强制 JSON 输出,解析失败返空 dict 让上层走 offline。
 - `prompts/*.txt` — 每个阶段的 system prompt,领域无关。修改 prompt 是调优主入口,代码里基本只负责组装 user payload。

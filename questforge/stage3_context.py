@@ -135,11 +135,25 @@ def _category_match_score(cat_a: str, cat_b: str) -> float:
     return len(sa & sb) / max(len(sa | sb), 1)
 
 
-def _rotate_pick(values: list[str], target_n: int, sample_idx: int) -> list[str]:
-    """按 sample_idx 轮转选取,让同类题尽量使用不同资产窗口。"""
+def _rotate_pick(
+    values: list[str],
+    target_n: int,
+    sample_idx: int,
+    covered_by: dict[str, list[str]] | None = None,
+) -> list[str]:
+    """按 sample_idx 和已覆盖情况选取,让同类题与跨类型题尽量使用不同资产窗口。"""
     ordered = list(dict.fromkeys(v for v in values if v))
     if len(ordered) <= target_n:
         return ordered
+    if covered_by:
+        indexed = list(enumerate(ordered))
+        indexed.sort(
+            key=lambda item: (
+                len(covered_by.get(item[1], [])),
+                (item[0] - sample_idx) % len(ordered),
+            )
+        )
+        return [aid for _, aid in indexed[:target_n]]
     start = sample_idx % len(ordered)
     rotated = ordered[start:] + ordered[:start]
     return rotated[:target_n]
@@ -151,6 +165,7 @@ def _match_assets(
     knowledge_assets: list[dict[str, Any]],
     client: LLMClient,
     features: list[dict[str, Any]] | None = None,
+    covered_by: dict[str, list[str]] | None = None,
 ) -> list[str]:
     """按多级匹配选主资产:process.depends_on > features 反查 > output.category 子串 > LLM。"""
     difficulty = test["difficulty"]
@@ -161,7 +176,7 @@ def _match_assets(
     # 一级:Stage 2 LLM 直接在 process 上写了 depends_on
     direct = [x for x in (rep_process.get("depends_on") or []) if x in asset_ids]
     if direct:
-        return _rotate_pick(direct, target_n, sample_idx)
+        return _rotate_pick(direct, target_n, sample_idx, covered_by)
 
     # 二级:通过 features 反查(feature.name 与 process.name 字符重叠最高者)
     features = features or []
@@ -180,7 +195,7 @@ def _match_assets(
         if best_feat and best_overlap >= 2:
             dep = [x for x in (best_feat.get("depends_on") or []) if x in asset_ids]
             if dep:
-                return _rotate_pick(dep, target_n, sample_idx)
+                return _rotate_pick(dep, target_n, sample_idx, covered_by)
 
     # 三级:output.category 子串匹配
     output_cats = [o.get("category", "") for o in rep_process.get("outputs", [])]
@@ -199,16 +214,16 @@ def _match_assets(
     strong = [aid for aid, s in top if s >= 0.75]
 
     if len(strong) >= 1:
-        return _rotate_pick([aid for aid, _ in top], target_n, sample_idx)
+        return _rotate_pick([aid for aid, _ in top], target_n, sample_idx, covered_by)
 
     # 四级:LLM 裁决
     if client.use_llm:
         ranked_ids = _llm_rank_assets(client, rep_process, knowledge_assets)
         if ranked_ids:
-            return _rotate_pick(ranked_ids, target_n, sample_idx)
+            return _rotate_pick(ranked_ids, target_n, sample_idx, covered_by)
 
     # 仍无 → 取全部资产前 N 个作为保底
-    return _rotate_pick([a["id"] for a in knowledge_assets], target_n, sample_idx)
+    return _rotate_pick([a["id"] for a in knowledge_assets], target_n, sample_idx, covered_by)
 
 
 def _llm_rank_assets(client: LLMClient, rep_process: dict[str, Any], assets: list[dict[str, Any]]) -> list[str]:
@@ -678,7 +693,14 @@ def run(stage2_md: Path | str, out_dir: Path | None, agent_input: AgentInput) ->
 
     for test in test_plan:
         rep = pid2proc[test["source_process"]]
-        asset_ids = _match_assets(test, rep, knowledge_assets, client, features=features)
+        asset_ids = _match_assets(
+            test,
+            rep,
+            knowledge_assets,
+            client,
+            features=features,
+            covered_by=covered_by,
+        )
         asset_cards = [asset_by_id[a] for a in asset_ids if a in asset_by_id]
 
         fragments = _pick_fragments(

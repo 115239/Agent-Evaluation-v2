@@ -1,0 +1,433 @@
+{
+  "TEST-001": {
+    "total_max_score": 10,
+    "stages": [
+      {
+        "stage_name": "定义问题",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "准确识别核心诉求为‘定性量纪建议生成’，而非单纯概念解释或条文检索",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "定性量纪",
+              "处分档次"
+            ]
+          },
+          {
+            "description": "识别隐含需求：需同时回应‘是否属于八项规定范畴’‘是否违反政治/工作纪律’‘依据最新版本’三项子任务",
+            "score": 1.0,
+            "evidence_type": "semantic_match",
+            "keywords": [
+              "八项规定范畴",
+              "违反政治纪律",
+              "违反工作纪律",
+              "最新官方发布版本"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "拆解问题",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "第一步必须显性拆解出‘收受财物’与‘影响公正执行公务’的政治语境关联",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "影响公正执行公务",
+              "收受财物"
+            ]
+          },
+          {
+            "description": "第二步必须指向KB-001条款匹配，第三步必须指向KB-002问答融合，顺序与名称完全一致",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "KB-001",
+              "KB-002",
+              "解析用户查询",
+              "多粒度语义匹配",
+              "融合实务问答结果"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "方案生成",
+        "max_score": 3,
+        "weight": 0.3,
+        "scoring_points": [
+          {
+            "description": "定性结论须明确‘不属于八项规定范畴’（因八项规定为政策精神，非独立纪律类别），并说明其实际归属廉洁纪律与工作纪律",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "不属于八项规定范畴",
+              "廉洁纪律",
+              "工作纪律"
+            ]
+          },
+          {
+            "description": "量纪情节分析须区分从宽/从严情形，且指出本案无典型从宽或从严情节",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "从宽情节",
+              "从严情节",
+              "无主动交代",
+              "无对抗审查"
+            ]
+          },
+          {
+            "description": "处分档次建议须与FRAG-002-0667条款梯度严格对应，且注明‘情节较轻’依据",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "警告处分",
+              "情节较轻",
+              "FRAG-002-0667"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "执行落地",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "输出严格为三段式结构：定性、量纪情节分析、建议处分档次，缺一不可",
+            "score": 1.0,
+            "evidence_type": "semantic_match",
+            "keywords": [
+              "定性",
+              "量纪情节分析",
+              "建议处分档次"
+            ]
+          },
+          {
+            "description": "所有条款引用须标注权威出处（如‘依据20210315版实务问答’‘参照KB-001 FRAG-001-0109’），排除模糊表述",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "20210315",
+              "KB-001",
+              "FRAG-001-0109"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "元认知",
+        "max_score": 1,
+        "weight": 0.1,
+        "scoring_points": [
+          {
+            "description": "明确说明‘八项规定’为政策精神而非独立纪律类别，并提示党纪与法律边界",
+            "score": 1.0,
+            "evidence_type": "llm_judge",
+            "keywords": []
+          }
+        ]
+      }
+    ],
+    "fatal_deductions": [
+      {
+        "description": "将‘特定关系人收受财物’错误纳入分析范围，导致定性偏差",
+        "detection_rule": "出现‘特定关系人’或‘亲属代收’等关键词，且未引用FRAG-002-0034明确排除"
+      }
+    ],
+    "veto_items": [
+      {
+        "description": "未引用20210315或之后发布的官方版本，或引用‘2018年条例’‘旧版问答’等过时来源",
+        "detection_rule": "出现‘2018年’‘旧版’‘修订前’等字样，或未出现‘20210315’‘最新官方发布’等时效关键词"
+      }
+    ]
+  },
+  "TEST-002": {
+    "total_max_score": 10,
+    "stages": [
+      {
+        "stage_name": "定义问题",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "准确识别用户核心诉求是核查‘严明政治纪律’和‘中央八项规定’两处表述与总书记讲话原文的一致性",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "严明政治纪律",
+              "中央八项规定"
+            ]
+          },
+          {
+            "description": "明确隐含需求为生成结构化口径校验报告，且须满足三项约束：引用讲话原文、标注偏差出处、提示人工复核点",
+            "score": 1.0,
+            "evidence_type": "semantic_match",
+            "keywords": [
+              "口径校验报告",
+              "引用官方发布的讲话摘要及上下文作为唯一依据",
+              "标注校验报告中每一项口径偏差所对应的讲话原文片段",
+              "依据审核复核触发场景，主动识别并提示需人工复核的模糊表述"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "拆解问题",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "第一步必须提取文书中的政策性表述，如‘严明政治纪律’‘中央八项规定’等术语",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "提取文书中的政策性表述、政治术语（如'反腐败斗争关系民心这个最大的政治'）"
+            ]
+          },
+          {
+            "description": "第二步必须调用KB-003比对并溯源，第三步必须输出修正建议及对应原文依据，三步顺序与文字完全匹配源流程",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "调用KB-003进行原文片段比对与上下文溯源，识别出处标题、发布时间、主题标签",
+              "标记表述偏差位置，输出修正建议及对应讲话原文依据"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "方案生成",
+        "max_score": 3,
+        "weight": 0.3,
+        "scoring_points": [
+          {
+            "description": "信息源必须限定为KB-003内三个指定片段，且简述需体现讲话标题与时间（如‘2018年政治局第六次集体学习’）",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "KB-003",
+              "2018-06-30",
+              "2017-10-27",
+              "2019-07-15"
+            ]
+          },
+          {
+            "description": "必须指出‘中央八项规定’在KB-003政治建设主题片段中无直接原文支撑，属跨主题词，需人工复核",
+            "score": 1.0,
+            "evidence_type": "llm_judge",
+            "keywords": []
+          },
+          {
+            "description": "必须说明‘严明政治纪律’虽高频出现，但在KB-003中无独立成句，需结合‘把党的政治建设摆在首位’等上下文整体理解",
+            "score": 1.0,
+            "evidence_type": "llm_judge",
+            "keywords": []
+          }
+        ]
+      },
+      {
+        "stage_name": "执行落地",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "输出必须为结构化合规清单，含‘原文表述’‘偏差类型’‘修正建议+原文片段’三列",
+            "score": 1.0,
+            "evidence_type": "semantic_match",
+            "keywords": [
+              "合规清单格式的口径校验报告",
+              "三列"
+            ]
+          },
+          {
+            "description": "对无法完全匹配的表述（如‘中央八项规定’在政治建设语境中），必须显式标注‘需人工复核’并说明理由",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "需人工复核"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "元认知",
+        "max_score": 1,
+        "weight": 0.1,
+        "scoring_points": [
+          {
+            "description": "必须声明所有依据均来自KB-003中2017–2019年官方讲话摘要，并提示‘中央八项规定’原始出处不在当前资产范围",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "KB-003",
+              "2017–2019年",
+              "中央八项规定",
+              "原始出处不在当前资产范围"
+            ]
+          }
+        ]
+      }
+    ],
+    "fatal_deductions": [
+      {
+        "description": "未将‘严明政治纪律’或‘中央八项规定’任一关键词作为核心校验对象，即视为根本性理解错误",
+        "detection_rule": "prompt中明确出现的两个关键词在回答中均未被列为校验目标"
+      }
+    ],
+    "veto_items": [
+      {
+        "description": "引用非KB-003来源（如条例、通知、内部解读）作为主要依据",
+        "detection_rule": "出现‘《中国共产党纪律处分条例》’‘中纪委通知’‘实务问答库’等KB-003以外的资产名称或特征词"
+      }
+    ]
+  },
+  "TEST-003": {
+    "total_max_score": 10,
+    "stages": [
+      {
+        "stage_name": "定义问题",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "准确识别核心诉求为‘审查调查类文书合规性终审纠错’，而非一般性文字润色或单点条款查询",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "审查调查",
+              "合规性终审纠错"
+            ]
+          },
+          {
+            "description": "明确隐含需求是交付结构化纠错修订包，且须满足‘每处修改附条款出处’这一硬性交付条件",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "纠错修订包",
+              "对应条款出处"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "拆解问题",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "完整列出四步操作序列，且顺序与BP-003.steps.name完全一致，无增删、调序或合并",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "对文书全文进行三重校验：表达规范性（语法/术语）、依据准确性（条款引用有效性）、口径一致性（与总书记讲话/理论文章精神）"
+            ]
+          },
+          {
+            "description": "指出步骤间不可逆依赖关系，如第二步‘并行调用知识库’必须基于第一步校验发现的错误位置",
+            "score": 1.0,
+            "evidence_type": "semantic_match",
+            "keywords": [
+              "不可逆",
+              "依赖关系"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "方案生成",
+        "max_score": 3,
+        "weight": 0.3,
+        "scoring_points": [
+          {
+            "description": "明确以KB-004 FRAG-004-4690（严格依规依纪依法开展审查调查）为刚性校准基准，用于识别FRAG-004-1346中柔性表述的风险点",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "严格依规依纪依法开展审查调查",
+              "三个提升"
+            ]
+          },
+          {
+            "description": "提出‘跨源解释空白’概念，用于处理理论摘要与结构化条款在处分尺度上的表述冲突，体现交叉验证意识",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "理论文章摘要",
+              "结构化条款",
+              "表述冲突"
+            ]
+          },
+          {
+            "description": "设计‘需人工复核’标注机制，覆盖‘灵活把握尺度’等无法被条款直接约束的模糊表述，并绑定上下文语境",
+            "score": 1.0,
+            "evidence_type": "semantic_match",
+            "keywords": [
+              "需人工复核",
+              "模糊表述"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "执行落地",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "输出格式严格遵循结构化条款交付规范：含修订位置、原句、修正句、依据条款号、理论出处、错误类型标签六要素",
+            "score": 1.0,
+            "evidence_type": "semantic_match",
+            "keywords": [
+              "修订位置",
+              "依据条款号",
+              "错误类型标签"
+            ]
+          },
+          {
+            "description": "对无法自动判定的情形（如新型违纪形态）设置人工介入触发机制，而非强行输出结论",
+            "score": 1.0,
+            "evidence_type": "llm_judge",
+            "keywords": []
+          }
+        ]
+      },
+      {
+        "stage_name": "元认知",
+        "max_score": 1,
+        "weight": 0.1,
+        "scoring_points": [
+          {
+            "description": "明确声明所有条款引用均基于最新官方版本，并标注理论出处的作者、文献标题及平台，体现权威溯源意识",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "最新官方版本",
+              "作者",
+              "文献标题"
+            ]
+          }
+        ]
+      }
+    ],
+    "fatal_deductions": [
+      {
+        "description": "未将‘理论文章摘要与结构化条款在处分尺度上存在表述冲突’作为关键干扰项纳入方案设计，导致纠错逻辑闭环缺失",
+        "detection_rule": "未出现‘表述冲突’或‘处分尺度’相关语义"
+      }
+    ],
+    "veto_items": [
+      {
+        "description": "答案中出现 KB-xxx / FRAG-xxx 等内部ID代号，违反业务语言表达规范",
+        "detection_rule": "正则匹配 KB-[0-9]+|FRAG-[0-9]+-[0-9]+"
+      }
+    ]
+  }
+}

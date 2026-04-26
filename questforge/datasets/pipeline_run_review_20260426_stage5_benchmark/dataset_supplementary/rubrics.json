@@ -1,0 +1,422 @@
+{
+  "TEST-001": {
+    "total_max_score": 10,
+    "stages": [
+      {
+        "stage_name": "定义问题",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "准确识别核心诉求为生成具备法律效力支撑的定性量纪建议书，而非单纯条款罗列或案例复述",
+            "score": 1.0,
+            "evidence_type": "llm_judge",
+            "keywords": []
+          },
+          {
+            "description": "显性指出‘违反中央八项规定精神’为本案核心违纪行为标签，并关联公务接待、超标准住宿等具体情节",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "违反中央八项规定精神",
+              "公务接待",
+              "超标准住宿"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "拆解问题",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "完整复现三个步骤名称，顺序与文字与source_process.steps完全一致，无合并、缩写或替换",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "输入违纪事实要素（主体、行为、情节、后果）并触发定性量纪建议生成功能",
+              "系统调用党纪法规语义检索（FEAT-001）匹配相关条款，提取要点词与违纪行为标签",
+              "融合实务问答知识（KB-002）校验量纪尺度，生成含条款序号、处分档次与理由说明的结构化建议"
+            ]
+          },
+          {
+            "description": "说明步骤间依赖关系：第二步由第一步触发，第三步必须以前两步输出为输入并完成交叉验证",
+            "score": 1.0,
+            "evidence_type": "semantic_match",
+            "keywords": [
+              "触发",
+              "校验",
+              "交叉验证"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "方案生成",
+        "max_score": 3,
+        "weight": 0.3,
+        "scoring_points": [
+          {
+            "description": "明确调用KB-002中至少两个不同FRAG-ID片段（如FRAG-002-0059与FRAG-002-0061），用于支撑‘聚焦问题’与‘阐释要旨’双重功能",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "FRAG-002-0059",
+              "FRAG-002-0061"
+            ]
+          },
+          {
+            "description": "提出‘版本差异标注机制’：当发现初核材料引用旧版条款时，须同步呈现新旧条款对比及适用建议",
+            "score": 1.0,
+            "evidence_type": "semantic_match",
+            "keywords": [
+              "版本差异",
+              "新旧条款对比"
+            ]
+          },
+          {
+            "description": "设计闭环逻辑链：违纪事实→行为标签（违反中央八项规定精神）→条款锚定（条例第XX条）→案例印证（20210804指导性案例）→量纪建议（警告或严重警告）→理由说明（含要旨+情节匹配）",
+            "score": 1.0,
+            "evidence_type": "llm_judge",
+            "keywords": []
+          }
+        ]
+      },
+      {
+        "stage_name": "执行落地",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "输出格式严格满足五字段结构（事实摘要/定性结论/适用条款/量纪档次/理由说明），且每个字段内容非空、非模板占位符",
+            "score": 1.0,
+            "evidence_type": "semantic_match",
+            "keywords": [
+              "事实摘要",
+              "定性结论",
+              "适用条款",
+              "量纪档次",
+              "理由说明"
+            ]
+          },
+          {
+            "description": "对条款引用执行双标注：既注明《中国共产党纪律处分条例》具体条款及修订年份，又注明参照中央纪委国家监委20210804指导性案例",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "中国共产党纪律处分条例",
+              "20210804",
+              "指导性案例"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "元认知",
+        "max_score": 1,
+        "weight": 0.1,
+        "scoring_points": [
+          {
+            "description": "主动声明知识边界：说明本建议不替代审理部门终审意见，且未覆盖涉嫌犯罪问题处置",
+            "score": 1.0,
+            "evidence_type": "semantic_match",
+            "keywords": [
+              "不替代审理部门终审",
+              "未覆盖涉嫌犯罪"
+            ]
+          }
+        ]
+      }
+    ],
+    "fatal_deductions": [
+      {
+        "description": "未提及‘中央八项规定精神’或使用‘八项规定’等不完整简称，导致政治口径偏差",
+        "detection_rule": "关键词缺失：'中央八项规定精神'未完整出现"
+      }
+    ],
+    "veto_items": [
+      {
+        "description": "建议书中出现KB-xxx、FRAG-xxx等内部ID代号作为正式引用依据",
+        "detection_rule": "正则匹配：KB-[0-9]+|FRAG-[0-9]+-[0-9]+"
+      }
+    ]
+  },
+  "TEST-002": {
+    "total_max_score": 10,
+    "stages": [
+      {
+        "stage_name": "定义问题",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "准确识别核心矛盾：将‘政绩观错位’等行为错误归类为违反政治纪律，而非‘违反中央八项规定精神’",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "违反中央八项规定精神",
+              "形式主义官僚主义"
+            ]
+          },
+          {
+            "description": "识别隐含时效性风险：引用2021年版规则但未比对2023年修订版，构成政治合规性隐患",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "最新官方发布版本",
+              "政治合规性比对"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "拆解问题",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "完整列出三步操作序列，且顺序与BP-002.steps.name严格一致",
+            "score": 1.0,
+            "evidence_type": "semantic_match",
+            "keywords": [
+              "解析文书全文",
+              "比对KB-001条款效力边界与KB-002实务口径",
+              "关联总书记讲话与理论文章"
+            ]
+          },
+          {
+            "description": "说明步骤间依赖关系，如第二步必须完成KB-001与KB-002交叉验证后方可进入第三步",
+            "score": 1.0,
+            "evidence_type": "llm_judge"
+          }
+        ]
+      },
+      {
+        "stage_name": "方案生成",
+        "max_score": 3,
+        "weight": 0.3,
+        "scoring_points": [
+          {
+            "description": "至少调用3个不同FRAG-ID片段，覆盖行为特征（FRAG-002-0082）、条款依据（FRAG-002-0079）、归类规则（FRAG-002-0083）",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "FRAG-002-0082",
+              "FRAG-002-0079",
+              "FRAG-002-0083"
+            ]
+          },
+          {
+            "description": "明确提出‘四维闭环验证’方法：行为—条款—归类—定性，并说明各维度对应的具体片段",
+            "score": 1.0,
+            "evidence_type": "semantic_match",
+            "keywords": [
+              "行为—条款—归类—定性",
+              "四维闭环验证"
+            ]
+          },
+          {
+            "description": "指出KB-001与KB-002交叉验证是纠错前提，且必须覆盖‘效力边界’与‘实务口径’双维度",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "KB-001条款效力边界",
+              "KB-002实务口径",
+              "交叉验证"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "执行落地",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "输出格式严格符合六字段结构化清单，且‘是否需人工确认’字段对版本差异项显式标注",
+            "score": 1.0,
+            "evidence_type": "semantic_match",
+            "keywords": [
+              "六字段",
+              "是否需人工确认",
+              "版本差异"
+            ]
+          },
+          {
+            "description": "异常处理机制明确：KB-001与KB-002冲突时暂停自动修正，并附冲突条款原文对比",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "KB-001与KB-002冲突",
+              "暂停自动修正",
+              "冲突条款原文对比"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "元认知",
+        "max_score": 1,
+        "weight": 0.1,
+        "scoring_points": [
+          {
+            "description": "在依据标注中明确区分‘20210804中央纪委国家监委发布’与‘2023年修订版《监督执纪工作规则》’，体现版本意识与出处权威性",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "20210804中央纪委国家监委发布",
+              "2023年修订版"
+            ]
+          }
+        ]
+      }
+    ],
+    "fatal_deductions": [
+      {
+        "description": "未识别‘政绩观错位’等行为属于形式主义官僚主义范畴，仍维持‘违反政治纪律’错误定性",
+        "detection_rule": "输出中出现‘违反政治纪律’作为问题定性结论，或未引用FRAG-002-0083关于单列表述的要求"
+      }
+    ],
+    "veto_items": [
+      {
+        "description": "未在问题清单中标注‘需业务人员确认’项，尤其遗漏对2021年版与2023年修订版规则表述差异的提示",
+        "detection_rule": "输出中缺失‘是否需人工确认’字段，或该字段未包含‘版本差异’相关表述"
+      }
+    ]
+  },
+  "TEST-003": {
+    "total_max_score": 10,
+    "stages": [
+      {
+        "stage_name": "定义问题",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "准确识别用户核心诉求是生成可嵌入学习材料的结构化政策引用包，而非泛泛解释概念",
+            "score": 1.0,
+            "evidence_type": "llm_judge",
+            "keywords": []
+          },
+          {
+            "description": "识别出三项硬约束：唯一依据为官方讲话摘要及上下文、必须整合上下文保语义完整、输出须含原文+出处+场景说明",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "官方发布的讲话摘要",
+              "整合讲话摘要与其原始上下文片段",
+              "条款原文、出处层级与适用场景说明"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "拆解问题",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "正确列出三步流程，且名称与BP-003.steps.name完全一致，顺序不可调换",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "输入理论概念或政策表述，启动理论文章摘要检索（FEAT-003）与总书记讲话精准召回（FEAT-002）双通道查询",
+              "聚合匹配结果，按发布时间、权威层级（中央文件 > 讲话 > 理论文章）、主题覆盖度排序",
+              "抽取原文片段、标注数据来源与上下文逻辑链，生成可嵌入政策解读材料的引用包"
+            ]
+          },
+          {
+            "description": "指出排序优先级依据为时间近因、权威层级、主题覆盖度，符合业务实务逻辑",
+            "score": 1.0,
+            "evidence_type": "llm_judge",
+            "keywords": []
+          }
+        ]
+      },
+      {
+        "stage_name": "方案生成",
+        "max_score": 3,
+        "weight": 0.3,
+        "scoring_points": [
+          {
+            "description": "明确选用FRAG-003-0101作为主引文源，因其标题与用户提问‘健全全面从严治党体系’完全一致，且为新华社通稿",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "健全全面从严治党体系",
+              "新华社通稿"
+            ]
+          },
+          {
+            "description": "合理引入FRAG-003-0154作逻辑延伸支撑，建立‘体系构建’与‘自我革命’的政策语义链，体现跨片段整合能力",
+            "score": 1.0,
+            "evidence_type": "semantic_match",
+            "keywords": [
+              "跳出历史周期率",
+              "自我革命"
+            ]
+          },
+          {
+            "description": "拒绝使用FRAG-003-0031（二十大报告开篇口号式表述），因未出现目标短语，体现对‘语义完整性’约束的主动守界",
+            "score": 1.0,
+            "evidence_type": "llm_judge",
+            "keywords": []
+          }
+        ]
+      },
+      {
+        "stage_name": "执行落地",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "输出格式严格满足‘结构化条款’要求，含【原文摘录】【出处层级】【发布时间】【适用场景】四要素",
+            "score": 1.0,
+            "evidence_type": "semantic_match",
+            "keywords": [
+              "原文摘录",
+              "出处层级",
+              "发布时间",
+              "适用场景"
+            ]
+          },
+          {
+            "description": "异常处理明确：当二十大报告无直接匹配时，以2023年6月讲话为最高依据，不越权补全",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "2023年6月15日讲话",
+              "不外推至理论文章或地方文件"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "元认知",
+        "max_score": 1,
+        "weight": 0.1,
+        "scoring_points": [
+          {
+            "description": "清晰标注FRAG-003-0101为新华社通稿、2023年6月15日发布，体现‘官方发布’与‘权威层级’双重确认；并说明未采用二十大报告片段的缘由，展现边界意识",
+            "score": 1.0,
+            "evidence_type": "llm_judge",
+            "keywords": []
+          }
+        ]
+      }
+    ],
+    "fatal_deductions": [
+      {
+        "description": "引用非官方渠道（如自媒体解读、地方党校讲义）或未标注新华社通稿来源",
+        "detection_rule": "输出中出现‘据某专家分析’‘某省学习读本指出’等非官方信源，或未出现‘新华社’‘2023-06-15’等关键词"
+      }
+    ],
+    "veto_items": [
+      {
+        "description": "将‘中国特色社会主义’‘伟大社会革命实践’等干扰项误作核心引用对象，偏离‘健全全面从严治党体系’主线",
+        "detection_rule": "引文主体未聚焦‘健全全面从严治党体系’或其直接政策衍生成果（如自我革命、历史周期率），而转向其他宏观表述"
+      }
+    ]
+  }
+}
