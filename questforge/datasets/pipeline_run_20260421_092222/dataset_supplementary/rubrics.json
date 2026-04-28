@@ -1,0 +1,270 @@
+{
+  "TEST-001": {
+    "total_max_score": 10,
+    "stages": [
+      {
+        "stage_name": "定义问题",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "准确识别用户核心诉求为生成‘定性+量纪’双要素结构化建议，而非单纯解释八项规定或列举案例",
+            "score": 1.0,
+            "evidence_type": "llm_judge",
+            "keywords": []
+          },
+          {
+            "description": "显性识别约束‘依据KB-002最新官方版本’和‘不整合跨流程资产’，并在问题理解中排除BP-001外信息源",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "KB-002最新官方版本",
+              "不整合跨流程资产"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "拆解问题",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "正确列出BP-001全部三个步骤名称，顺序与<source_process>.steps完全一致，无增删改",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "调用党纪法规语义检索（FEAT-001）获取匹配条款及要点词",
+              "叠加实务问答验证辅助（FEAT-004）比对标准答案与来源文档",
+              "整合条款要点、违纪行为定义与实务结论，生成结构化定性量纪建议草稿"
+            ]
+          },
+          {
+            "description": "指出步骤执行必须严格遵循编号顺序，不得合并、跳过或调换",
+            "score": 1.0,
+            "evidence_type": "semantic_match",
+            "keywords": [
+              "严格按步骤编号顺序执行"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "方案生成",
+        "max_score": 3,
+        "weight": 0.3,
+        "scoring_points": [
+          {
+            "description": "引用FRAG-002-0059确认行为定性锚点为‘违反中央八项规定精神’",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "违反中央八项规定精神"
+            ]
+          },
+          {
+            "description": "引用FRAG-002-0060支撑‘性质认定、条规适用、处理处分’三环节需同步覆盖",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "性质认定、条规适用、处理处分"
+            ]
+          },
+          {
+            "description": "引用FRAG-002-0061明确输出须含‘定性量纪理由、纪法条规适用’，确保建议非空泛结论",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "定性量纪理由",
+              "纪法条规适用"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "执行落地",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "输出格式严格满足‘结构化建议’且含‘定性结论’与‘量纪建议’两个独立字段，无额外解释性文字",
+            "score": 1.0,
+            "evidence_type": "semantic_match",
+            "keywords": [
+              "结构化建议",
+              "定性结论",
+              "量纪建议"
+            ]
+          },
+          {
+            "description": "所有结论均标注KB-002出处（含20210804日期），未混入其他版本或外部条规",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "20210804",
+              "KB-002"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "元认知",
+        "max_score": 1,
+        "weight": 0.1,
+        "scoring_points": [
+          {
+            "description": "明确声明本建议边界：仅限BP-001流程内输出，不延伸至审查调查、谈话函询等环节",
+            "score": 1.0,
+            "evidence_type": "semantic_match",
+            "keywords": [
+              "仅限BP-001流程内",
+              "不延伸至审查调查"
+            ]
+          }
+        ]
+      }
+    ],
+    "fatal_deductions": [
+      {
+        "description": "输出中出现‘四种形态’‘从宽情节’‘从严情节’等<glossary>中定义但KB-002未提及的术语，视为擅自引入外部知识",
+        "detection_rule": "llm_judge detects presence of glossary terms not appearing in KB-002 fragments"
+      }
+    ],
+    "veto_items": [
+      {
+        "description": "未在输出中标注‘20210804’或未指明‘KB-002’来源，即判定为未满足‘依据KB-002最新官方版本’约束",
+        "detection_rule": "keyword_match misses '20210804' or 'KB-002'"
+      }
+    ]
+  },
+  "TEST-002": {
+    "total_max_score": 10,
+    "stages": [
+      {
+        "stage_name": "定义问题",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "准确识别核心诉求为审核复核场景下的纪检文书纠错与依据回溯，而非单纯知识查询",
+            "score": 1.0,
+            "evidence_type": "llm_judge"
+          },
+          {
+            "description": "显性指出‘瞒报家庭住房情况’为事实锚点，隐性覆盖‘修订版文书’和‘纠错依据溯源清单’双输出需求",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "修订版文书",
+              "纠错依据溯源清单"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "拆解问题",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "严格按BP-002.steps顺序列出全部4个步骤名称，文字与顺序零偏差",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "上传文书文本，触发纪检文书智能纠错（FEAT-005）识别依据错误与表述偏差",
+              "自动关联KB-001（党纪条款）、KB-002（实务问答）、KB-003（总书记讲话）定位修正依据原文",
+              "生成带标注的修订版文书，含错误类型标签、修正建议及对应条款/讲话/问答出处",
+              "输出纠错报告供审理人员交叉验证并决定是否退回修改"
+            ]
+          },
+          {
+            "description": "明确步骤间依赖关系，指出步骤2必须同步调用KB-001与KB-002",
+            "score": 1.0,
+            "evidence_type": "semantic_match"
+          }
+        ]
+      },
+      {
+        "stage_name": "方案生成",
+        "max_score": 3,
+        "weight": 0.3,
+        "scoring_points": [
+          {
+            "description": "正确选用KB-001/FRAG-001-1559作为‘瞒报家庭住房’唯一依据源，并排除FRAG-001-1903与FRAG-002-0225",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "KB-001/FRAG-001-1559",
+              "瞒报家庭住房情况"
+            ]
+          },
+          {
+            "description": "说明KB-002仅用于构成要件验证，不替代KB-001定性效力，体现跨资产权限边界",
+            "score": 1.0,
+            "evidence_type": "semantic_match"
+          },
+          {
+            "description": "提出对‘工程设计图纸进行’等误引字段的处理策略：标注‘待确认’并附法律适用说明",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "待确认",
+              "工程设计图纸进行"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "执行落地",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "修订版文书格式要求含Track Changes与红色批注框，且明确标注KB版本号与FRAG-ID",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "Track Changes",
+              "红色批注框",
+              "KB-001（v2023.12）",
+              "FRAG-001-1559"
+            ]
+          },
+          {
+            "description": "纠错依据溯源清单字段完整（错误位置/原句/修正句/FRAG-ID/snippet摘要/KB版本号）",
+            "score": 1.0,
+            "evidence_type": "semantic_match"
+          }
+        ]
+      },
+      {
+        "stage_name": "元认知",
+        "max_score": 1,
+        "weight": 0.1,
+        "scoring_points": [
+          {
+            "description": "明确声明KB-002不得替代KB-001定性，且指出KB-002/FRAG-002-0225在此案中属越权引用",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "越权引用",
+              "KB-002/FRAG-002-0225"
+            ]
+          }
+        ]
+      }
+    ],
+    "fatal_deductions": [
+      {
+        "description": "未在参考答案中体现‘审核复核触发场景’这一关键上下文，导致问题定位失焦",
+        "detection_rule": "reference.define_problem.intent_understanding 中缺失‘审核复核’关键词"
+      }
+    ],
+    "veto_items": [
+      {
+        "description": "未完整输出‘修订版文书’和‘纠错依据溯源清单’两项结果，任缺其一即整题零分",
+        "detection_rule": "reference.execution.output_format 中未同时描述两项输出格式"
+      }
+    ]
+  }
+}

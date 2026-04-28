@@ -1,0 +1,896 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cobra Chat</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f5f5; height: 100vh; display: flex; flex-direction: column; }
+
+/* Config_Bar */
+.config-bar {
+  background: #1a1a2e; color: #fff; padding: 10px 16px;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; flex-shrink: 0;
+}
+.config-bar h1 { font-size: 18px; font-weight: 600; white-space: nowrap; }
+.config-bar label { font-size: 13px; color: #aaa; white-space: nowrap; }
+.config-bar select, .config-bar input[type="text"] {
+  background: #16213e; color: #fff; border: 1px solid #333;
+  border-radius: 4px; padding: 4px 8px; font-size: 13px;
+}
+.config-bar input[type="text"] { width: 220px; }
+.config-bar .custom-tenant-input { width: 120px; }
+.config-bar .spacer { flex: 1; }
+.config-bar .status { font-size: 12px; padding: 2px 8px; border-radius: 4px; white-space: nowrap; }
+.config-bar button {
+  background: #4ecca3; color: #1a1a2e; border: none; border-radius: 4px;
+  padding: 4px 12px; font-size: 12px; cursor: pointer; white-space: nowrap; font-weight: 600;
+}
+.config-bar button:hover { background: #3dbb91; }
+
+/* Tab_Bar */
+.tab-bar {
+  background: #16213e; display: flex; align-items: stretch;
+  overflow-x: auto; flex-shrink: 0; border-bottom: 2px solid #0f3460;
+  min-height: 36px;
+}
+.tab-bar::-webkit-scrollbar { height: 3px; }
+.tab-bar::-webkit-scrollbar-thumb { background: #4ecca3; border-radius: 2px; }
+.tab-item {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 12px; font-size: 13px; color: #aaa;
+  cursor: pointer; white-space: nowrap; border-right: 1px solid #0f3460;
+  transition: background 0.15s, color 0.15s; position: relative; user-select: none;
+}
+.tab-item:hover { background: #1a1a3e; color: #ddd; }
+.tab-item.active { background: #1a1a2e; color: #4ecca3; font-weight: 600; }
+.tab-item .tab-close {
+  font-size: 14px; color: #666; cursor: pointer; margin-left: 4px;
+  width: 18px; height: 18px; display: flex; align-items: center; justify-content: center;
+  border-radius: 3px; line-height: 1;
+}
+.tab-item .tab-close:hover { background: #cc3333; color: #fff; }
+.tab-item .tab-indicator {
+  width: 6px; height: 6px; border-radius: 50%; background: #ffcc00;
+  display: none; animation: pulse 1s infinite;
+}
+.tab-item .tab-indicator.show { display: inline-block; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+.tab-add {
+  display: flex; align-items: center; justify-content: center;
+  padding: 6px 14px; font-size: 18px; color: #4ecca3; cursor: pointer;
+  transition: background 0.15s;
+}
+.tab-add:hover { background: #1a1a3e; }
+
+/* Message_Area */
+.messages {
+  flex: 1; overflow-y: auto; padding: 20px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.msg {
+  max-width: 80%; padding: 10px 14px; border-radius: 12px;
+  font-size: 14px; line-height: 1.6; word-break: break-word; white-space: pre-wrap;
+}
+.msg.user { align-self: flex-end; background: #0084ff; color: #fff; border-bottom-right-radius: 4px; }
+.msg.assistant { align-self: flex-start; background: #fff; color: #333; border-bottom-left-radius: 4px; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
+.msg.thinking {
+  align-self: flex-start; background: #f0f0f0; color: #888; font-size: 13px;
+  font-style: italic; border-bottom-left-radius: 4px; cursor: pointer;
+}
+.msg.thinking .thinking-summary { display: flex; align-items: center; gap: 4px; }
+.msg.thinking .thinking-summary .arrow { font-style: normal; font-size: 10px; transition: transform 0.2s; }
+.msg.thinking .thinking-summary .arrow.expanded { transform: rotate(90deg); }
+.msg.thinking .thinking-content { display: none; margin-top: 8px; border-top: 1px solid #ddd; padding-top: 8px; white-space: pre-wrap; }
+.msg.thinking .thinking-content.show { display: block; }
+.msg.tool {
+  align-self: flex-start; background: #e8f4fd; color: #0066cc; font-size: 13px;
+  border-bottom-left-radius: 4px; border-left: 3px solid #0084ff;
+}
+.msg.tool-result {
+  align-self: flex-start; background: #f0faf0; color: #336633; font-size: 12px;
+  border-bottom-left-radius: 4px; border-left: 3px solid #4ecca3;
+}
+.msg.tool-result .truncated-content { cursor: pointer; }
+.msg.tool-result .full-content { display: none; white-space: pre-wrap; }
+.msg.tool-result .full-content.show { display: block; }
+.msg.tool-result .truncated-content.hide { display: none; }
+.msg.tool-result .toggle-btn {
+  color: #0084ff; cursor: pointer; font-size: 12px; margin-top: 4px;
+  display: inline-block; text-decoration: underline;
+}
+.msg.error { align-self: flex-start; background: #fde8e8; color: #cc0000; font-size: 13px; border-bottom-left-radius: 4px; }
+.msg.system { align-self: center; background: transparent; color: #999; font-size: 12px; text-align: center; max-width: 100%; }
+
+/* Code blocks */
+.msg pre { background: #1e1e1e; color: #d4d4d4; padding: 10px; border-radius: 6px; overflow-x: auto; margin: 6px 0; white-space: pre; font-size: 13px; }
+.msg pre code { font-family: 'Consolas', 'Monaco', 'Courier New', monospace; }
+
+/* Input_Bar */
+.input-bar {
+  background: #fff; border-top: 1px solid #e0e0e0; padding: 10px 16px;
+  display: flex; gap: 8px; align-items: flex-end; flex-shrink: 0; flex-wrap: wrap;
+}
+.input-bar textarea {
+  flex: 1; min-width: 200px; border: 1px solid #ddd; border-radius: 8px;
+  padding: 10px 14px; font-size: 14px; font-family: inherit;
+  resize: none; height: 44px; max-height: 120px; outline: none;
+  transition: border-color 0.2s;
+}
+.input-bar textarea:focus { border-color: #0084ff; }
+.input-bar .btn-group { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.input-bar button {
+  border: none; border-radius: 6px; padding: 8px 16px; font-size: 13px;
+  cursor: pointer; transition: background 0.2s; white-space: nowrap;
+}
+.input-bar .btn-send { background: #0084ff; color: #fff; font-weight: 600; }
+.input-bar .btn-send:hover { background: #0066cc; }
+.input-bar .btn-send:disabled { background: #ccc; cursor: not-allowed; }
+.input-bar .btn-secondary { background: #e8e8e8; color: #555; }
+.input-bar .btn-secondary:hover { background: #d0d0d0; }
+.input-bar .stream-toggle { display: flex; align-items: center; gap: 4px; font-size: 12px; color: #666; white-space: nowrap; }
+.input-bar .stream-toggle input { cursor: pointer; }
+
+/* Responsive */
+@media (max-width: 768px) {
+  .config-bar { padding: 8px 10px; gap: 6px; }
+  .config-bar h1 { font-size: 15px; }
+  .config-bar input[type="text"] { width: 140px; }
+  .config-bar .custom-tenant-input { width: 90px; }
+  .messages { padding: 12px; }
+  .msg { max-width: 90%; }
+  .input-bar { padding: 8px 10px; }
+}
+</style>
+</head>
+<body>
+
+<!-- Config_Bar -->
+<div class="config-bar">
+  <h1>🐍 Cobra Chat</h1>
+  <div class="spacer"></div>
+  <label>服务器</label>
+  <input type="text" id="serverUrl" value="http://120.55.192.33:6060" />
+  <button id="testConnBtn" onclick="ConfigBar.testConnection()">测试连接</button>
+  <label>租户</label>
+  <select id="tenantSelect">
+    <option value="default">default</option>
+    <option value="test-doubao">test-doubao</option>
+  </select>
+  <input type="text" id="customTenantInput" class="custom-tenant-input" placeholder="自定义租户" />
+  <button onclick="ConfigBar.addCustomTenant()">添加</button>
+  <span class="status" id="statusText" style="color:#4ecca3;">就绪</span>
+</div>
+
+<!-- Tab_Bar -->
+<div class="tab-bar" id="tabBar">
+  <!-- tabs rendered dynamically -->
+  <div class="tab-add" id="tabAddBtn" title="新建会话">+</div>
+</div>
+
+<!-- Message_Area -->
+<div class="messages" id="messageArea"></div>
+
+<!-- Input_Bar -->
+<div class="input-bar">
+  <textarea id="userInput" placeholder="输入消息... (Enter 发送, Shift+Enter 换行)" rows="1"></textarea>
+  <div class="btn-group">
+    <label class="stream-toggle">
+      <input type="checkbox" id="streamMode" checked /> 流式
+    </label>
+    <button class="btn-secondary" onclick="ConversationManager.clearMessages()">清空</button>
+    <button class="btn-secondary" onclick="ConversationManager.exportMessages()">导出</button>
+    <button class="btn-send" id="sendBtn" onclick="InputHandler.sendMessage()">发送</button>
+  </div>
+</div>
+
+<script>
+
+// ============================================================
+// 1. Global State & Tab Data Model
+// ============================================================
+const state = {
+  tabs: [],
+  activeTabId: null,
+  tabCounter: 0,
+  serverUrl: 'http://localhost:6060',
+  streamMode: true
+};
+
+function createTabData(tenantId) {
+  state.tabCounter++;
+  const seq = state.tabCounter;
+  const id = 'tab-' + seq;
+  return {
+    id: id,
+    tenantId: tenantId,
+    sessionId: null,
+    messages: [],
+    title: tenantId + ' #' + seq,
+    sending: false,
+    seq: seq
+  };
+}
+
+// ============================================================
+// 2. ConfigBar Module
+// ============================================================
+const ConfigBar = {
+  getServerUrl() {
+    return document.getElementById('serverUrl').value.replace(/\/+$/, '');
+  },
+  getTenantId() {
+    return document.getElementById('tenantSelect').value;
+  },
+  isStreamMode() {
+    return document.getElementById('streamMode').checked;
+  },
+  setStatus(text, color) {
+    const el = document.getElementById('statusText');
+    el.textContent = text;
+    el.style.color = color || '#4ecca3';
+  },
+  addCustomTenant(tenantIdArg) {
+    const input = document.getElementById('customTenantInput');
+    const tenantId = tenantIdArg || input.value.trim();
+    if (!tenantId) return;
+    const select = document.getElementById('tenantSelect');
+    // Check if already exists
+    for (let i = 0; i < select.options.length; i++) {
+      if (select.options[i].value === tenantId) {
+        select.value = tenantId;
+        input.value = '';
+        return;
+      }
+    }
+    const opt = document.createElement('option');
+    opt.value = tenantId;
+    opt.textContent = tenantId;
+    select.appendChild(opt);
+    select.value = tenantId;
+    input.value = '';
+  },
+  async testConnection() {
+    try {
+      ConfigBar.setStatus('测试中...', '#ffcc00');
+      const resp = await fetch(ConfigBar.getServerUrl() + '/health');
+      const data = await resp.json();
+      if (data.status === 'healthy') {
+        ConfigBar.setStatus('连接成功 ✓', '#4ecca3');
+      } else {
+        ConfigBar.setStatus('响应异常', '#cc0000');
+      }
+    } catch (err) {
+      ConfigBar.setStatus('连接失败: ' + err.message, '#cc0000');
+    }
+  }
+};
+
+// ============================================================
+// 3. TabManager Module
+// ============================================================
+const TabManager = {
+  createTab(tenantId) {
+    const tid = tenantId || ConfigBar.getTenantId();
+    const tab = createTabData(tid);
+    state.tabs.push(tab);
+    state.activeTabId = tab.id;
+    this.renderTabBar();
+    this._renderMessages(tab);
+    return tab;
+  },
+
+  async closeTab(tabId) {
+    const idx = state.tabs.findIndex(t => t.id === tabId);
+    if (idx === -1) return;
+    const tab = state.tabs[idx];
+
+    // Close server session silently
+    if (tab.sessionId) {
+      try { await ChatService.closeSession(tab.sessionId); } catch(e) { /* silent */ }
+    }
+
+    state.tabs.splice(idx, 1);
+
+    if (state.tabs.length === 0) {
+      // Last tab closed, create new default
+      this.createTab('default');
+      return;
+    }
+
+    if (state.activeTabId === tabId) {
+      // Switch to adjacent tab
+      const newIdx = Math.min(idx, state.tabs.length - 1);
+      state.activeTabId = state.tabs[newIdx].id;
+      this._renderMessages(state.tabs[newIdx]);
+    }
+    this.renderTabBar();
+  },
+
+  switchTab(tabId) {
+    const tab = state.tabs.find(t => t.id === tabId);
+    if (!tab) return;
+    state.activeTabId = tabId;
+    this.renderTabBar();
+    this._renderMessages(tab);
+    // Update input state based on tab's sending state
+    InputHandler.setEnabled(!tab.sending);
+  },
+
+  getActiveTab() {
+    return state.tabs.find(t => t.id === state.activeTabId) || null;
+  },
+
+  getAllTabs() {
+    return state.tabs;
+  },
+
+  updateTabIndicator(tabId, indicatorState) {
+    const el = document.querySelector(`.tab-item[data-id="${tabId}"] .tab-indicator`);
+    if (el) {
+      if (indicatorState === 'loading') {
+        el.classList.add('show');
+      } else {
+        el.classList.remove('show');
+      }
+    }
+  },
+
+  renderTabBar() {
+    const bar = document.getElementById('tabBar');
+    const addBtn = document.getElementById('tabAddBtn');
+    // Remove all tab items except add button
+    const existing = bar.querySelectorAll('.tab-item');
+    existing.forEach(el => el.remove());
+
+    state.tabs.forEach(tab => {
+      const item = document.createElement('div');
+      item.className = 'tab-item' + (tab.id === state.activeTabId ? ' active' : '');
+      item.dataset.id = tab.id;
+
+      const indicator = document.createElement('span');
+      indicator.className = 'tab-indicator';
+      if (tab.sending && tab.id !== state.activeTabId) indicator.classList.add('show');
+
+      const titleSpan = document.createElement('span');
+      titleSpan.textContent = tab.title;
+
+      const closeBtn = document.createElement('span');
+      closeBtn.className = 'tab-close';
+      closeBtn.textContent = '×';
+      closeBtn.onclick = (e) => { e.stopPropagation(); TabManager.closeTab(tab.id); };
+
+      item.appendChild(indicator);
+      item.appendChild(titleSpan);
+      item.appendChild(closeBtn);
+      item.onclick = () => TabManager.switchTab(tab.id);
+
+      bar.insertBefore(item, addBtn);
+    });
+  },
+
+  _renderMessages(tab) {
+    const area = document.getElementById('messageArea');
+    area.innerHTML = '';
+    if (tab.messages.length === 0) {
+      area.appendChild(MessageRenderer.renderSystemMessage('选择租户，输入消息开始对话'));
+      return;
+    }
+    tab.messages.forEach(msg => {
+      let el;
+      switch (msg.role) {
+        case 'user': el = MessageRenderer.renderUserMessage(msg.content); break;
+        case 'assistant': el = MessageRenderer.renderAssistantMessage(msg.content); break;
+        case 'thinking': el = MessageRenderer.renderThinkingBlock(msg.content); break;
+        case 'tool': el = MessageRenderer.renderToolCall(msg.content); break;
+        case 'tool_result': el = MessageRenderer.renderToolResult(msg.content); break;
+        case 'error': el = MessageRenderer.renderError(msg.content); break;
+        case 'system': el = MessageRenderer.renderSystemMessage(msg.content); break;
+        default: el = MessageRenderer.renderSystemMessage(msg.content);
+      }
+      area.appendChild(el);
+    });
+    area.scrollTop = area.scrollHeight;
+  }
+};
+
+// ============================================================
+// 4. MessageRenderer Module
+// ============================================================
+const MessageRenderer = {
+  renderUserMessage(text) {
+    const div = document.createElement('div');
+    div.className = 'msg user';
+    div.textContent = text;
+    return div;
+  },
+
+  renderAssistantMessage(text) {
+    const div = document.createElement('div');
+    div.className = 'msg assistant';
+    div.innerHTML = this.renderMarkdownCode(text);
+    return div;
+  },
+
+  renderThinkingBlock(text) {
+    const div = document.createElement('div');
+    div.className = 'msg thinking';
+    div.dataset.collapsed = 'true';
+
+    const summary = document.createElement('div');
+    summary.className = 'thinking-summary';
+    const arrow = document.createElement('span');
+    arrow.className = 'arrow';
+    arrow.textContent = '▶';
+    const label = document.createElement('span');
+    label.textContent = '💭 思考中...';
+    summary.appendChild(arrow);
+    summary.appendChild(label);
+
+    const content = document.createElement('div');
+    content.className = 'thinking-content';
+    content.textContent = text;
+
+    div.appendChild(summary);
+    div.appendChild(content);
+
+    div.onclick = () => this.toggleThinkingBlock(div);
+    return div;
+  },
+
+  renderToolCall(toolInfo) {
+    const div = document.createElement('div');
+    div.className = 'msg tool';
+    const name = (typeof toolInfo === 'object') ? (toolInfo.name || JSON.stringify(toolInfo)) : String(toolInfo);
+    div.textContent = '🔧 调用工具: ' + name;
+    return div;
+  },
+
+  renderToolResult(result, maxLen) {
+    maxLen = maxLen || 500;
+    const div = document.createElement('div');
+    div.className = 'msg tool-result';
+    const text = (typeof result === 'string') ? result : JSON.stringify(result, null, 2);
+
+    if (text.length > maxLen) {
+      const truncated = document.createElement('div');
+      truncated.className = 'truncated-content';
+      truncated.textContent = '📋 工具结果: ' + text.substring(0, maxLen) + '...';
+
+      const full = document.createElement('div');
+      full.className = 'full-content';
+      full.textContent = '📋 工具结果: ' + text;
+
+      const toggleBtn = document.createElement('span');
+      toggleBtn.className = 'toggle-btn';
+      toggleBtn.textContent = '展开全部';
+      toggleBtn.onclick = () => {
+        const isShowing = full.classList.contains('show');
+        if (isShowing) {
+          full.classList.remove('show');
+          truncated.classList.remove('hide');
+          toggleBtn.textContent = '展开全部';
+        } else {
+          full.classList.add('show');
+          truncated.classList.add('hide');
+          toggleBtn.textContent = '收起';
+        }
+      };
+
+      div.appendChild(truncated);
+      div.appendChild(full);
+      div.appendChild(toggleBtn);
+    } else {
+      div.textContent = '📋 工具结果: ' + text;
+    }
+    return div;
+  },
+
+  renderError(text) {
+    const div = document.createElement('div');
+    div.className = 'msg error';
+    div.textContent = '❌ ' + text;
+    return div;
+  },
+
+  renderSystemMessage(text) {
+    const div = document.createElement('div');
+    div.className = 'msg system';
+    div.textContent = text;
+    return div;
+  },
+
+  renderMarkdownCode(text) {
+    // Escape HTML first, then handle code blocks
+    const escaped = text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+    // Replace fenced code blocks: ```lang\n...\n``` → <pre><code>...</code></pre>
+    return escaped.replace(/```(\w*)\n([\s\S]*?)```/g, function(match, lang, code) {
+      return '<pre><code>' + code + '</code></pre>';
+    });
+  },
+
+  toggleThinkingBlock(element) {
+    const isCollapsed = element.dataset.collapsed === 'true';
+    const arrow = element.querySelector('.arrow');
+    const content = element.querySelector('.thinking-content');
+    if (isCollapsed) {
+      element.dataset.collapsed = 'false';
+      if (arrow) arrow.classList.add('expanded');
+      if (content) content.classList.add('show');
+    } else {
+      element.dataset.collapsed = 'true';
+      if (arrow) arrow.classList.remove('expanded');
+      if (content) content.classList.remove('show');
+    }
+  }
+};
+
+
+// ============================================================
+// 5. ChatService Module
+// ============================================================
+const ChatService = {
+  async sendSync(body) {
+    const resp = await fetch(ConfigBar.getServerUrl() + '/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (!resp.ok) {
+      const text = await resp.text();
+      throw new Error('HTTP ' + resp.status + ': ' + text);
+    }
+    return await resp.json();
+  },
+
+  async sendStream(body, callbacks) {
+    const resp = await fetch(ConfigBar.getServerUrl() + '/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (!resp.ok) {
+      const text = await resp.text();
+      throw new Error('HTTP ' + resp.status + ': ' + text);
+    }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop(); // keep incomplete line in buffer
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('data:')) continue;
+        const payload = trimmed.slice(5);
+        if (payload === '[DONE]') continue;
+
+        let chunk;
+        try { chunk = JSON.parse(payload); } catch(e) { continue; } // skip invalid JSON
+
+        const type = chunk.chunk_type;
+        const content = chunk.chunk;
+
+        if (type === 'think' && callbacks.onThink) callbacks.onThink(content);
+        else if (type === 'answer' && callbacks.onAnswer) callbacks.onAnswer(content);
+        else if (type === 'tool' && callbacks.onTool) callbacks.onTool(content);
+        else if (type === 'tool_result' && callbacks.onToolResult) callbacks.onToolResult(content);
+        else if (type === 'error' && callbacks.onError) callbacks.onError(content);
+        else if (type === 'done' && callbacks.onDone) callbacks.onDone(chunk.metadata || {});
+
+        // Also check metadata for session_id on any chunk
+        if (chunk.metadata && chunk.metadata.session_id && callbacks.onDone && type !== 'done') {
+          // session_id can come in done chunk, handled above
+        }
+      }
+    }
+
+    // Process any remaining buffer
+    if (buffer.trim()) {
+      const trimmed = buffer.trim();
+      if (trimmed.startsWith('data:')) {
+        const payload = trimmed.slice(5);
+        if (payload !== '[DONE]') {
+          try {
+            const chunk = JSON.parse(payload);
+            const type = chunk.chunk_type;
+            const content = chunk.chunk;
+            if (type === 'think' && callbacks.onThink) callbacks.onThink(content);
+            else if (type === 'answer' && callbacks.onAnswer) callbacks.onAnswer(content);
+            else if (type === 'tool' && callbacks.onTool) callbacks.onTool(content);
+            else if (type === 'tool_result' && callbacks.onToolResult) callbacks.onToolResult(content);
+            else if (type === 'error' && callbacks.onError) callbacks.onError(content);
+            else if (type === 'done' && callbacks.onDone) callbacks.onDone(chunk.metadata || {});
+          } catch(e) { /* skip */ }
+        }
+      }
+    }
+  },
+
+  async closeSession(sessionId) {
+    const resp = await fetch(ConfigBar.getServerUrl() + '/session/' + sessionId, {
+      method: 'DELETE'
+    });
+    return await resp.json();
+  },
+
+  async healthCheck() {
+    const resp = await fetch(ConfigBar.getServerUrl() + '/health');
+    return await resp.json();
+  }
+};
+
+// ============================================================
+// 6. ConversationManager Module
+// ============================================================
+const ConversationManager = {
+  clearMessages(tab) {
+    const target = tab || TabManager.getActiveTab();
+    if (!target) return;
+    target.messages = [];
+    if (target.id === state.activeTabId) {
+      TabManager._renderMessages(target);
+    }
+  },
+
+  exportMessages(tab) {
+    const target = tab || TabManager.getActiveTab();
+    if (!target) return;
+    if (target.messages.length === 0) return;
+
+    let text = '对话导出 - ' + target.title + '\n';
+    text += '导出时间: ' + new Date().toLocaleString() + '\n';
+    text += '========================================\n\n';
+
+    target.messages.forEach(msg => {
+      const roleMap = {
+        user: '用户', assistant: '助手', thinking: '思考',
+        tool: '工具调用', tool_result: '工具结果', error: '错误', system: '系统'
+      };
+      const roleName = roleMap[msg.role] || msg.role;
+      const content = (typeof msg.content === 'object') ? JSON.stringify(msg.content) : msg.content;
+      text += '[' + roleName + '] ' + content + '\n\n';
+    });
+
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = target.title.replace(/\s+/g, '_') + '_' + Date.now() + '.txt';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+};
+
+// ============================================================
+// 7. InputHandler Module
+// ============================================================
+const InputHandler = {
+  init() {
+    const input = document.getElementById('userInput');
+    input.addEventListener('input', () => this.autoResize());
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        this.sendMessage();
+      }
+    });
+  },
+
+  async sendMessage() {
+    const input = document.getElementById('userInput');
+    const query = input.value.trim();
+    if (!query) return;
+
+    const tab = TabManager.getActiveTab();
+    if (!tab || tab.sending) return;
+
+    tab.sending = true;
+    this.setEnabled(false);
+    input.value = '';
+    input.style.height = '44px';
+
+    // Add user message
+    tab.messages.push({ role: 'user', content: query, timestamp: Date.now() });
+    const area = document.getElementById('messageArea');
+    area.appendChild(MessageRenderer.renderUserMessage(query));
+    area.scrollTop = area.scrollHeight;
+
+    const body = {
+      tenant_id: tab.tenantId,
+      query: query,
+      stream: ConfigBar.isStreamMode()
+    };
+    if (tab.sessionId) body.session_id = tab.sessionId;
+
+    try {
+      if (ConfigBar.isStreamMode()) {
+        await this._sendStream(tab, body);
+      } else {
+        await this._sendSync(tab, body);
+      }
+    } catch (err) {
+      const errMsg = '请求失败: ' + err.message;
+      tab.messages.push({ role: 'error', content: errMsg, timestamp: Date.now() });
+      area.appendChild(MessageRenderer.renderError(errMsg));
+      area.scrollTop = area.scrollHeight;
+      ConfigBar.setStatus('错误', '#cc0000');
+    } finally {
+      tab.sending = false;
+      this.setEnabled(true);
+      // Hide indicator for this tab
+      TabManager.updateTabIndicator(tab.id, 'idle');
+      input.focus();
+    }
+  },
+
+  async _sendSync(tab, body) {
+    ConfigBar.setStatus('等待响应...', '#ffcc00');
+    const data = await ChatService.sendSync(body);
+    const area = document.getElementById('messageArea');
+
+    if (data.success === false) {
+      const errContent = data.answer || '请求失败';
+      tab.messages.push({ role: 'error', content: errContent, timestamp: Date.now() });
+      if (tab.id === state.activeTabId) {
+        area.appendChild(MessageRenderer.renderError(errContent));
+        area.scrollTop = area.scrollHeight;
+      }
+    } else {
+      if (data.answer) {
+        tab.messages.push({ role: 'assistant', content: data.answer, timestamp: Date.now() });
+        if (tab.id === state.activeTabId) {
+          area.appendChild(MessageRenderer.renderAssistantMessage(data.answer));
+          area.scrollTop = area.scrollHeight;
+        }
+      }
+    }
+
+    // Extract session_id
+    if (data.metadata && data.metadata.session_id) {
+      tab.sessionId = data.metadata.session_id;
+    }
+    ConfigBar.setStatus('就绪', '#4ecca3');
+  },
+
+  async _sendStream(tab, body) {
+    ConfigBar.setStatus('接收中...', '#ffcc00');
+    const area = document.getElementById('messageArea');
+    let answerEl = null;
+    let thinkEl = null;
+    let answerText = '';
+    let thinkText = '';
+
+    // Show indicator for non-active tab
+    if (tab.id !== state.activeTabId) {
+      TabManager.updateTabIndicator(tab.id, 'loading');
+    }
+
+    await ChatService.sendStream(body, {
+      onThink(content) {
+        if (!content) return;
+        thinkText += content;
+        tab.messages = tab.messages.filter(m => m._thinkRef !== true);
+        tab.messages.push({ role: 'thinking', content: thinkText, timestamp: Date.now(), _thinkRef: true });
+
+        if (tab.id === state.activeTabId) {
+          if (!thinkEl) {
+            thinkEl = MessageRenderer.renderThinkingBlock(thinkText);
+            area.appendChild(thinkEl);
+          } else {
+            // Update content without changing collapse state
+            const contentEl = thinkEl.querySelector('.thinking-content');
+            if (contentEl) contentEl.textContent = thinkText;
+          }
+          area.scrollTop = area.scrollHeight;
+        }
+      },
+      onAnswer(content) {
+        if (!content) return;
+        answerText += content;
+        // Update or create the assistant message in tab.messages
+        const lastAssistant = tab.messages.findIndex(m => m._answerRef === true);
+        if (lastAssistant >= 0) {
+          tab.messages[lastAssistant].content = answerText;
+        } else {
+          tab.messages.push({ role: 'assistant', content: answerText, timestamp: Date.now(), _answerRef: true });
+        }
+
+        if (tab.id === state.activeTabId) {
+          if (!answerEl) {
+            answerEl = MessageRenderer.renderAssistantMessage(answerText);
+            area.appendChild(answerEl);
+          } else {
+            answerEl.innerHTML = MessageRenderer.renderMarkdownCode(answerText);
+          }
+          area.scrollTop = area.scrollHeight;
+        }
+      },
+      onTool(toolInfo) {
+        tab.messages.push({ role: 'tool', content: toolInfo, timestamp: Date.now() });
+        if (tab.id === state.activeTabId) {
+          area.appendChild(MessageRenderer.renderToolCall(toolInfo));
+          area.scrollTop = area.scrollHeight;
+        }
+      },
+      onToolResult(result) {
+        tab.messages.push({ role: 'tool_result', content: result, timestamp: Date.now() });
+        if (tab.id === state.activeTabId) {
+          area.appendChild(MessageRenderer.renderToolResult(result));
+          area.scrollTop = area.scrollHeight;
+        }
+        // Reset answer accumulator for next answer segment after tool
+        answerEl = null;
+        answerText = '';
+      },
+      onError(errText) {
+        tab.messages.push({ role: 'error', content: errText, timestamp: Date.now() });
+        if (tab.id === state.activeTabId) {
+          area.appendChild(MessageRenderer.renderError(errText));
+          area.scrollTop = area.scrollHeight;
+        }
+      },
+      onDone(metadata) {
+        if (metadata && metadata.session_id) {
+          tab.sessionId = metadata.session_id;
+        }
+      }
+    });
+
+    if (!answerEl && !thinkEl && tab.id === state.activeTabId) {
+      area.appendChild(MessageRenderer.renderSystemMessage('(无响应内容)'));
+    }
+    ConfigBar.setStatus('就绪', '#4ecca3');
+  },
+
+  setEnabled(enabled) {
+    const input = document.getElementById('userInput');
+    const sendBtn = document.getElementById('sendBtn');
+    input.disabled = !enabled;
+    sendBtn.disabled = !enabled;
+  },
+
+  autoResize() {
+    const input = document.getElementById('userInput');
+    input.style.height = '44px';
+    input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+  }
+};
+
+// ============================================================
+// 8. Integration - Wire everything together
+// ============================================================
+(function init() {
+  // Initialize InputHandler
+  InputHandler.init();
+
+  // Tab add button
+  document.getElementById('tabAddBtn').onclick = () => TabManager.createTab();
+
+  // Custom tenant input - Enter to add
+  document.getElementById('customTenantInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      ConfigBar.addCustomTenant();
+    }
+  });
+
+  // Create default tab on load
+  TabManager.createTab('default');
+})();
+</script>
+</body>
+</html>
