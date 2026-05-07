@@ -481,6 +481,7 @@ def _llm_generate_interferences(
     difficulty: str,
     counter: IdCounter,
     asset_by_id: dict[str, dict[str, Any]],
+    user_personas: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """按密度规则生成干扰项。expert 必须包含 ≥1 个陷阱型。"""
     n = config.INTERFERENCE_DENSITY[difficulty]
@@ -490,14 +491,30 @@ def _llm_generate_interferences(
     system_path = config.REPO_ROOT / "questforge/prompts/stage3_interferences.txt"
     system = system_path.read_text(encoding="utf-8")
     profile = _process_feature_profile(rep_process, asset_cards, weak_points)
+    personas_brief = []
+    for p in user_personas or []:
+        persona_payload = p.get("persona") or {}
+        eb = persona_payload.get("emotional_baseline") or {}
+        kd = persona_payload.get("knowledge_domain") or {}
+        if (eb.get("frustration_triggers") or []) or (kd.get("misconceptions") or []):
+            personas_brief.append(
+                {
+                    "id": p.get("id"),
+                    "role": p.get("role"),
+                    "frustration_triggers": eb.get("frustration_triggers") or [],
+                    "misconceptions": kd.get("misconceptions") or [],
+                    "stress_level": eb.get("stress_level") or "NOT_SPECIFIED",
+                }
+            )
     user = (
         f"<domain>{domain}</domain>\n"
         f"<process>{json.dumps({'id': rep_process.get('id'), 'name': rep_process.get('name'), 'outputs': rep_process.get('outputs')}, ensure_ascii=False)}</process>\n"
         f"<feature_profile>{json.dumps(profile, ensure_ascii=False)}</feature_profile>\n"
+        f"<user_personas>{json.dumps(personas_brief, ensure_ascii=False)}</user_personas>\n"
         f"<difficulty>{difficulty}</difficulty>\n"
         f"<target_count>{n}</target_count>\n"
         f"<trap_required>{'true' if difficulty == 'expert' else 'false'}</trap_required>\n"
-        '请输出 {"interferences":[{"text":"string","trap":bool}...]};陷阱型 text 必须含'
+        '请输出 {"interferences":[{"text":"string","trap":bool,"category":"string"}...]};陷阱型 text 必须含'
         f" {config.TRAP_KEYWORDS} 中任一关键词;不要解释。"
     )
     out = client.chat_json(system, user, max_tokens=1200)
@@ -508,11 +525,13 @@ def _llm_generate_interferences(
         if not text:
             continue
         is_trap = bool(item.get("trap", False)) or any(k in text for k in config.TRAP_KEYWORDS)
+        category = (item.get("category") or "").strip().lower() or "unspecified"
         items.append(
             {
                 "id": counter.next(),
                 "text": text,
                 "trap": is_trap,
+                "category": category,
                 "process_ref": rep_process.get("name"),
             }
         )
@@ -605,6 +624,8 @@ def run(stage2_md: Path | str, out_dir: Path | None, agent_input: AgentInput) ->
     glossary: dict[str, str] = art1.get("glossary", {})
     knowledge_assets: list[dict[str, Any]] = art1.get("knowledge_assets", [])
     features: list[dict[str, Any]] = art1.get("features", [])
+    user_groups: list[dict[str, Any]] = art1.get("user_groups", [])
+    user_groups_by_id: dict[str, dict[str, Any]] = {ug["id"]: ug for ug in user_groups if ug.get("id")}
 
     # --- LLM 必备 ---
     client = get_default_client()
@@ -735,6 +756,11 @@ def run(stage2_md: Path | str, out_dir: Path | None, agent_input: AgentInput) ->
         raw_interferences = _llm_generate_interferences(
             client, rep, asset_cards, agent_input.weak_points, agent_input.domain,
             test["difficulty"], i_counter, asset_by_id,
+            user_personas=[
+                user_groups_by_id.get((actor.get("id") or "").strip(), {})
+                for actor in (rep.get("actors") or [])
+                if (actor.get("id") or "").strip() in user_groups_by_id
+            ],
         )
 
         if not raw_constraints:

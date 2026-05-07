@@ -9,4 +9,11 @@
 5. 每个 feature 至少关联一个 knowledge_asset(通过 depends_on 字段引用其 KB-xxx)
 6. glossary 条目必须是领域内的专业术语,其定义需具体可操作(不要泛泛而谈)
 
+**user_groups 的 persona 子字段(language_profile / knowledge_domain / behavioral_pattern / emotional_baseline / goal_motivation)**:
+- 这些字段供后续阶段做 prompt 风格化与情绪型干扰生成,不是装饰
+- 枚举值必须严格使用 schema 给定的取值;无法从输入证据中判断时填 "NOT_SPECIFIED"
+- 列表字段(expert_areas / novice_areas / misconceptions / frustration_triggers)无证据时填空数组 []
+- emotional_baseline.frustration_triggers 应描述该角色在使用 AI 时易产生不耐烦的具体场景(如"答非所问"、"长篇定义堆砌"),不要写成"用户不满意"这类空话
+- knowledge_domain.misconceptions 应是该角色易犯的领域错误认知(如"误以为政纪与党纪适用相同处分梯度")
+
 仅输出一个合法 JSON 对象,严禁输出 markdown 围栏或任何解释性文字。

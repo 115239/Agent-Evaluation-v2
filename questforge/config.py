@@ -141,6 +141,15 @@ STAGE4_DIFFICULTY_SCORE_THRESHOLDS = {"basic": 1.5, "advanced": 2.3}
 STAGE4_LLM_MAX_TOKENS = 6000
 
 
+# ========== Stage 6 · 先验答题模拟自检(借鉴 Future AGI SimulatorAgent)==========
+# 每难度抽几道做自检(default 1,即每个难度 1 道,合计最多 3 道,控制 LLM 开销)
+STAGE6_SAMPLE_PER_DIFFICULTY = int(os.environ.get("QUESTFORGE_STAGE6_SAMPLE", "1"))
+# 每题需要 4 次 LLM 调用,并发上限略低于 Stage 4
+STAGE6_MAX_WORKERS = max(1, LLM_CONCURRENCY // 2)
+# diff_mean 通过门槛(rubric 区分能力下限)
+STAGE6_DIFF_PASS_THRESHOLD = float(os.environ.get("QUESTFORGE_STAGE6_DIFF_THR", "3.0"))
+
+
 # ========== 日志 ==========
 LOG_LEVEL = os.environ.get("QUESTFORGE_LOG", "INFO")
 
@@ -173,5 +182,8 @@ __all__ = [
     "STAGE4_STAGE_WEIGHTS",
     "STAGE4_DIFFICULTY_SCORE_THRESHOLDS",
     "STAGE4_LLM_MAX_TOKENS",
+    "STAGE6_SAMPLE_PER_DIFFICULTY",
+    "STAGE6_MAX_WORKERS",
+    "STAGE6_DIFF_PASS_THRESHOLD",
     "LOG_LEVEL",
 ]

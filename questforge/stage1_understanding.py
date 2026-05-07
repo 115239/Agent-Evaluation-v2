@@ -86,7 +86,17 @@ _JSON_SCHEMA_HINT_MAIN = """
 请严格按以下 JSON Schema 输出(仅一个 JSON 对象,不含 markdown 围栏):
 {
   "business_goal": {"success_metric": "string", "business_value": "string"},
-  "user_groups": [{"id": "UG-xxx", "role": "string", "responsibility": "string", "typical_query": "string"}],
+  "user_groups": [{
+    "id": "UG-xxx",
+    "role": "string",
+    "responsibility": "string",
+    "typical_query": "string",
+    "language_profile": {"formality": "formal|casual|mixed", "vocabulary": "simple|technical|mixed"},
+    "knowledge_domain": {"expert_areas": ["string"], "novice_areas": ["string"], "misconceptions": ["string"]},
+    "behavioral_pattern": {"interaction_style": "direct|exploratory|methodical", "info_need": "minimal|moderate|comprehensive"},
+    "emotional_baseline": {"stress_level": "low|medium|high", "frustration_triggers": ["string"]},
+    "goal_motivation": {"primary_goal": "solve|learn|validate|explore", "time_pressure": "urgent|moderate|none"}
+  }],
   "features":    [{"id": "FEAT-xxx", "name": "string", "input": "string", "output": "string", "depends_on": ["KB-xxx"]}],
   "glossary":    {"term": "definition"}
 }
@@ -94,6 +104,9 @@ _JSON_SCHEMA_HINT_MAIN = """
 - business_goal.one_liner 已由用户提供,不必再输出;只输出 success_metric 与 business_value
 - depends_on 只能引用输入中给出的 KB ID
 - 若 samples 里有真实用户原话,user_groups.typical_query 必须引用原文
+- user_groups 的 5 个 persona 子字段(language_profile/knowledge_domain/behavioral_pattern/emotional_baseline/goal_motivation)均为枚举值,
+  无明确证据时用 "NOT_SPECIFIED"(对枚举字段)或空数组(对列表字段)
+- emotional_baseline.frustration_triggers 与 knowledge_domain.misconceptions 是后续阶段干扰生成与 prompt 风格化的种子,尽量给出 1-3 条具体描述
 """
 
 
@@ -180,6 +193,70 @@ def _llm_extract(
 
 
 # ========== 归一化 ==========
+_PERSONA_ENUMS: dict[str, set[str]] = {
+    "language_profile.formality": {"formal", "casual", "mixed"},
+    "language_profile.vocabulary": {"simple", "technical", "mixed"},
+    "behavioral_pattern.interaction_style": {"direct", "exploratory", "methodical"},
+    "behavioral_pattern.info_need": {"minimal", "moderate", "comprehensive"},
+    "emotional_baseline.stress_level": {"low", "medium", "high"},
+    "goal_motivation.primary_goal": {"solve", "learn", "validate", "explore"},
+    "goal_motivation.time_pressure": {"urgent", "moderate", "none"},
+}
+
+
+def _enum_or_unspecified(value: Any, allowed: set[str]) -> str:
+    s = (str(value or "")).strip().lower()
+    return s if s in allowed else "NOT_SPECIFIED"
+
+
+def _str_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(x).strip() for x in value if str(x).strip()]
+
+
+def _normalize_persona(raw: dict[str, Any]) -> dict[str, Any]:
+    """把 user_group 的 5 个 persona 子字段归一化到稳定枚举/列表。"""
+    lp = raw.get("language_profile") or {}
+    kd = raw.get("knowledge_domain") or {}
+    bp = raw.get("behavioral_pattern") or {}
+    eb = raw.get("emotional_baseline") or {}
+    gm = raw.get("goal_motivation") or {}
+    return {
+        "language_profile": {
+            "formality": _enum_or_unspecified(lp.get("formality"), _PERSONA_ENUMS["language_profile.formality"]),
+            "vocabulary": _enum_or_unspecified(lp.get("vocabulary"), _PERSONA_ENUMS["language_profile.vocabulary"]),
+        },
+        "knowledge_domain": {
+            "expert_areas": _str_list(kd.get("expert_areas")),
+            "novice_areas": _str_list(kd.get("novice_areas")),
+            "misconceptions": _str_list(kd.get("misconceptions")),
+        },
+        "behavioral_pattern": {
+            "interaction_style": _enum_or_unspecified(
+                bp.get("interaction_style"), _PERSONA_ENUMS["behavioral_pattern.interaction_style"]
+            ),
+            "info_need": _enum_or_unspecified(
+                bp.get("info_need"), _PERSONA_ENUMS["behavioral_pattern.info_need"]
+            ),
+        },
+        "emotional_baseline": {
+            "stress_level": _enum_or_unspecified(
+                eb.get("stress_level"), _PERSONA_ENUMS["emotional_baseline.stress_level"]
+            ),
+            "frustration_triggers": _str_list(eb.get("frustration_triggers")),
+        },
+        "goal_motivation": {
+            "primary_goal": _enum_or_unspecified(
+                gm.get("primary_goal"), _PERSONA_ENUMS["goal_motivation.primary_goal"]
+            ),
+            "time_pressure": _enum_or_unspecified(
+                gm.get("time_pressure"), _PERSONA_ENUMS["goal_motivation.time_pressure"]
+            ),
+        },
+    }
+
+
 def _normalize_user_groups(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
     counter = IdCounter("UG")
     normalized: list[dict[str, Any]] = []
@@ -190,6 +267,7 @@ def _normalize_user_groups(groups: list[dict[str, Any]]) -> list[dict[str, Any]]
                 "role": (g.get("role") or "").strip() or "未命名角色",
                 "responsibility": (g.get("responsibility") or "").strip(),
                 "typical_query": (g.get("typical_query") or "").strip(),
+                "persona": _normalize_persona(g),
             }
         )
     used: set[str] = set()
@@ -224,6 +302,34 @@ def _normalize_features(features: list[dict[str, Any]], kb_ids: set[str]) -> lis
 
 
 # ========== 主流程 ==========
+def _render_personas(user_groups: list[dict[str, Any]]) -> str:
+    if not user_groups:
+        return "(无 user_groups)"
+    rows = []
+    for u in user_groups:
+        p = u.get("persona") or {}
+        lp = p.get("language_profile") or {}
+        bp = p.get("behavioral_pattern") or {}
+        eb = p.get("emotional_baseline") or {}
+        gm = p.get("goal_motivation") or {}
+        kd = p.get("knowledge_domain") or {}
+        rows.append(
+            [
+                u["id"],
+                f"{lp.get('formality','-')}/{lp.get('vocabulary','-')}",
+                f"{bp.get('interaction_style','-')}/{bp.get('info_need','-')}",
+                f"{eb.get('stress_level','-')}",
+                "、".join((eb.get("frustration_triggers") or [])[:3]) or "—",
+                f"{gm.get('primary_goal','-')}/{gm.get('time_pressure','-')}",
+                "、".join((kd.get("misconceptions") or [])[:2]) or "—",
+            ]
+        )
+    return md_table(
+        ["ID", "语言风格", "行为", "压力", "情绪触发(摘录)", "目标/紧迫", "常见误解(摘录)"],
+        rows,
+    )
+
+
 def run(agent_input: AgentInput, out_dir: Path) -> Path:
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -445,6 +551,10 @@ def run(agent_input: AgentInput, out_dir: Path) -> Path:
                 ["ID", "角色", "职责", "典型诉求(原文示例)"],
                 [[u["id"], u["role"], u["responsibility"], truncate(u["typical_query"], 60)] for u in user_groups],
             ),
+        ),
+        Section(
+            "用户画像 · Persona 细分",
+            _render_personas(user_groups),
         ),
         Section(
             "核心功能清单",

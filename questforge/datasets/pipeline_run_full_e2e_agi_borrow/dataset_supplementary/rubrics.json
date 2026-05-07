@@ -1,0 +1,444 @@
+{
+  "TEST-001": {
+    "total_max_score": 10,
+    "stages": [
+      {
+        "stage_name": "定义问题",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "准确识别用户核心诉求为‘收受可能影响公正执行公务的财物’的党纪条款匹配，而非泛泛解释纪律分类",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "收受可能影响公正执行公务的财物",
+              "党纪条款匹配"
+            ]
+          },
+          {
+            "description": "明确隐含需求是输出唯一结构化条款项，符合‘仅输出党纪条款匹配结果一项结构化输出’约束",
+            "score": 1.0,
+            "evidence_type": "semantic_match",
+            "keywords": [
+              "结构化条款",
+              "一项"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "拆解问题",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "第一步必须完成违纪行为关键词解析与纪律类型初判（廉洁纪律/政治纪律），不得遗漏‘收受财物’与‘公正执行公务’的语境关联",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "收受财物",
+              "公正执行公务",
+              "廉洁纪律",
+              "政治纪律"
+            ]
+          },
+          {
+            "description": "第二步必须体现KB-001内多粒度匹配动作（条款要点词、行为描述、适用情形）及时效性排除机制",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "KB-001",
+              "多粒度语义匹配",
+              "时效性失效条款"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "方案生成",
+        "max_score": 3,
+        "weight": 0.3,
+        "scoring_points": [
+          {
+            "description": "输出必须包含纪律类型、条款原文、条款出处（精确到条、款、项）、核心要点四要素",
+            "score": 1.0,
+            "evidence_type": "semantic_match",
+            "keywords": [
+              "纪律类型",
+              "条款原文",
+              "条款出处",
+              "核心要点"
+            ]
+          },
+          {
+            "description": "条款出处必须标注为《中国共产党纪律处分条例》第八十八条第一款，该条款在KB-001中被FRAG-001-0109明确援引",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "第八十八条第一款",
+              "《中国共产党纪律处分条例》"
+            ]
+          },
+          {
+            "description": "核心要点须体现‘利用职权或职务影响收受财物，损害公务廉洁性’，与FRAG-001-0109中‘利用职权或者职务上的影响为他人谋取利益，收受可能影响公正执行公务的财物’严格对应",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "利用职权",
+              "职务影响",
+              "损害公务廉洁性"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "执行落地",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "输出格式严格遵循结构化条款模板，字段名与值之间用冒号分隔，整体为单行JSON-like字符串（不含JSON语法）",
+            "score": 1.0,
+            "evidence_type": "semantic_match",
+            "keywords": [
+              "结构化条款",
+              "纪律类型:",
+              "条款原文:",
+              "条款出处:",
+              "核心要点:"
+            ]
+          },
+          {
+            "description": "若KB-001中无匹配条款，必须返回‘无匹配有效条款’且不补充任何解释性文字",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "无匹配有效条款"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "元认知",
+        "max_score": 1,
+        "weight": 0.1,
+        "scoring_points": [
+          {
+            "description": "明确标注所有依据来自KB-001最新官方版本（2023年修订版），并强调条款出处须含条、款、项三级",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "KB-001",
+              "2023年修订版",
+              "条、款、项"
+            ]
+          }
+        ]
+      }
+    ],
+    "fatal_deductions": [
+      {
+        "description": "将‘收受可能影响公正执行公务的财物’错误归类为政治纪律或工作纪律",
+        "detection_rule": "输出中出现‘违反政治纪律’或‘违反工作纪律’且未加限定说明"
+      }
+    ],
+    "veto_items": [
+      {
+        "description": "未标注条款出处至条、款、项三级（如仅写‘第八十八条’或‘《条例》相关条款’）",
+        "detection_rule": "条款出处字段缺失‘第一款’或类似款、项级标识"
+      }
+    ]
+  },
+  "TEST-002": {
+    "total_max_score": 10,
+    "stages": [
+      {
+        "stage_name": "定义问题",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "准确识别用户核心诉求为‘调证通知书与扣押物品清单特征描述是否必须一致’，而非泛泛询问文书格式",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "调证通知书",
+              "扣押物品清单",
+              "特征描述",
+              "一致"
+            ]
+          },
+          {
+            "description": "识别隐含需求为生成完整审查调查决策支持包，而非仅回答是/否",
+            "score": 1.0,
+            "evidence_type": "semantic_match",
+            "keywords": [
+              "决策支持包"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "拆解问题",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "完整列出四个步骤名称，顺序与BP-002.steps完全一致，无增删改字",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "提取问题中的关键要素：行为主体、行为阶段（初核/立案后）、信息属性（组织已掌握/未掌握）",
+              "在KB-002中检索高度匹配的实务问答对，校验来源文档权威性（中央纪委文件/指导性案例）及时间有效性",
+              "比对标准答案与实际答案差异，标注适用前提、例外情形及政策演进提示",
+              "输出带溯源标记的决策支持包：结论、依据片段、风险提示"
+            ]
+          },
+          {
+            "description": "指出步骤执行须严格按序，不可跳步或倒置",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "按步骤序号顺序执行",
+              "不可跳步或倒置"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "方案生成",
+        "max_score": 3,
+        "weight": 0.3,
+        "scoring_points": [
+          {
+            "description": "引用FRAG-002-0037作为主依据，明确其核心结论‘描述不一致则无法确定是否为同一件扣押物品’",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "调证通知书",
+              "扣押物品清单",
+              "不一致",
+              "无法确定是否为同一件扣押物品"
+            ]
+          },
+          {
+            "description": "整合FRAG-002-0038与FRAG-002-0039作为辅助印证，体现‘文书要素统一性’规则在多类文书中的共性要求",
+            "score": 1.0,
+            "evidence_type": "semantic_match",
+            "keywords": [
+              "文书要素统一性",
+              "同类场景印证"
+            ]
+          },
+          {
+            "description": "明确交叉整合逻辑：三处片段共同支撑底层规则，且FRAG-002-0037为直接依据",
+            "score": 1.0,
+            "evidence_type": "llm_judge",
+            "keywords": []
+          }
+        ]
+      },
+      {
+        "stage_name": "执行落地",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "输出格式严格符合‘【结论】、【依据片段】、【风险提示】’三字段结构，每字段独立成段",
+            "score": 1.0,
+            "evidence_type": "semantic_match",
+            "keywords": [
+              "【结论】",
+              "【依据片段】",
+              "【风险提示】"
+            ]
+          },
+          {
+            "description": "异常情形处理机制明确：当无直接匹配条目时标注‘未检索到权威依据’并建议人工复核",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "未检索到权威依据",
+              "人工复核流程"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "元认知",
+        "max_score": 1,
+        "weight": 0.1,
+        "scoring_points": [
+          {
+            "description": "清晰标注依据来源为KB-002最新版本（20210513发布）及FRAG-002-0037条款，体现时效性与权威性双重标注",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "KB-002",
+              "20210513",
+              "FRAG-002-0037"
+            ]
+          }
+        ]
+      }
+    ],
+    "fatal_deductions": [
+      {
+        "description": "未引用KB-002中任何片段内容，或引用非最新版本（如未提20210513）",
+        "detection_rule": "输出中缺失‘KB-002’或‘20210513’关键词，或出现其他年份/版本号"
+      }
+    ],
+    "veto_items": [
+      {
+        "description": "结论未明确要求‘调证通知书与扣押物品清单特征描述必须一致’",
+        "detection_rule": "输出中未出现‘必须一致’‘须保持一致’‘应完全一致’等强制性表述"
+      }
+    ]
+  },
+  "TEST-003": {
+    "total_max_score": 10,
+    "stages": [
+      {
+        "stage_name": "定义问题",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "准确识别核心诉求为‘纪检文书纠错辅助与多源口径一致性校验’，而非单纯术语查证或单源条款核对",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "纪检文书纠错辅助",
+              "多源口径一致性校验"
+            ]
+          },
+          {
+            "description": "识别出隐含需求包含‘合规文书包’与‘错误归因摘要’两项闭环输出，且二者缺一不可",
+            "score": 1.0,
+            "evidence_type": "semantic_match",
+            "keywords": [
+              "闭环处置输出",
+              "错误归因摘要"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "拆解问题",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "完整列出五个步骤名称，与BP-003.steps.name完全一致（文字与顺序均无偏差）",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "识别文书类型与所处流程阶段，提取关键字段（如适用‘四种形态’层级、引用条款编号、政治表述措辞）",
+              "并行调用KB-001（条款引用准确性）、KB-002（实务口径一致性）、KB-003（总书记讲话政治表述规范性）进行交叉验证",
+              "定位三类错误：条款引用错位、形态适用逻辑矛盾、政治术语表述偏差（如将‘自我革命’误写为‘自我革新’）",
+              "生成带位置锚点的修正建议集，按紧急程度分级（必须修改/建议优化/存疑待人工确认）",
+              "聚合输出含修订痕迹的合规文书包及错误归因分析摘要"
+            ]
+          },
+          {
+            "description": "明确步骤执行优先级，指出步骤1→2→3→4→5顺序不可逆，且步骤2与3须同步完成",
+            "score": 1.0,
+            "evidence_type": "semantic_match",
+            "keywords": [
+              "顺序不可逆",
+              "同步完成"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "方案生成",
+        "max_score": 3,
+        "weight": 0.3,
+        "scoring_points": [
+          {
+            "description": "正确调用KB-003中至少三处不同年份权威片段（2017/2019/2023）支撑‘四种形态’‘政治纪律’‘八项规定精神’三类术语校验",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "2017-10-19",
+              "2019-11-01",
+              "2023-06-15"
+            ]
+          },
+          {
+            "description": "指出‘八项规定这么’为口语化误写，须依据FRAG-003-0011统一为‘中央八项规定精神’，并说明其作为‘金色名片’的政治定位",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "中央八项规定精神",
+              "金色名片"
+            ]
+          },
+          {
+            "description": "针对‘四种形态’适用冲突，提出以FRAG-003-0101（体系部署）与FRAG-003-0139（历史周期率）为逻辑主干，结合通报案例反向推导，而非机械套用条文",
+            "score": 1.0,
+            "evidence_type": "llm_judge",
+            "keywords": []
+          }
+        ]
+      },
+      {
+        "stage_name": "执行落地",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "输出格式严格符合JSON Schema要求，含'compliant_document_package'与'error_attribution_summary'两个顶层字段，且后者含四要素（错误类型、原文位置、依据片段ID、推断逻辑）",
+            "score": 1.0,
+            "evidence_type": "semantic_match",
+            "keywords": [
+              "compliant_document_package",
+              "error_attribution_summary",
+              "四要素"
+            ]
+          },
+          {
+            "description": "对KB-002缺失情形设置合理异常处理机制，在摘要中标注‘存疑待人工确认’并说明KB-003与KB-001结论无冲突",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "存疑待人工确认",
+              "KB-003与KB-001结论无冲突"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "元认知",
+        "max_score": 1,
+        "weight": 0.1,
+        "scoring_points": [
+          {
+            "description": "明确标注所有修正依据的发布时间与权威属性（如‘2023-06-15最新发布’‘中央纪委通报案例反向推导’），并划清‘不越权作出处分档次建议’的职责边界",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "2023-06-15",
+              "中央纪委通报案例反向推导",
+              "不越权作出处分档次建议"
+            ]
+          }
+        ]
+      }
+    ],
+    "fatal_deductions": [
+      {
+        "description": "未提及‘四种形态’适用逻辑矛盾，或将其简单归因为‘条款引用错位’而忽略‘形态适用逻辑矛盾’这一独立错误类型",
+        "detection_rule": "未出现‘形态适用逻辑矛盾’或等效表述（如‘适用层级倒置’‘形态边界混淆’）"
+      }
+    ],
+    "veto_items": [
+      {
+        "description": "使用KB-002历史修订稿或非权威解读内容作为校验依据，或未声明‘依据当前可用的最新官方发布版本’",
+        "detection_rule": "出现‘2018年试行版’‘内部解读稿’‘某省实施细则’等非最新权威来源，或未出现‘最新官方发布版本’字样"
+      }
+    ]
+  }
+}

@@ -22,6 +22,15 @@
   你必须在 prompt 中改写为业务语言(如"依据最新官方版本"、"基于实务问答库最新版本")
 - `context.constraints[]` 与 `context.interference_items[]` 在复述 stage3 原文时也需执行同样的去 ID 改写
 
+## prompt 风格化(基于 `<user_personas>`,Persona 字段非 NOT_SPECIFIED 时生效)
+- `language_profile.formality=formal` → 句式郑重;`casual` → 口语化、第一人称
+- `language_profile.vocabulary=technical` → 自然嵌入领域术语;`simple` → 避免堆砌专业词
+- `behavioral_pattern.interaction_style=methodical` → prompt 给出明确步骤铺垫;`exploratory` → 用开放式语境
+- `behavioral_pattern.info_need=comprehensive` → 嵌入背景细节;`minimal` → 短直接
+- `emotional_baseline.stress_level=high` 或 `goal_motivation.time_pressure=urgent` → prompt 显式表达紧迫感(如"今晚要交"、"上级在等")
+- `emotional_baseline.frustration_triggers` 非空 → 在 prompt 末尾追加 1 句反映用户对该触发场景的不耐烦诉求(例如触发是"答非所问",可写"别绕弯子,直接告诉我能不能这么处理")
+- `knowledge_domain.misconceptions` 非空 → 可在 prompt 中**带入**该误解作为提问前提(`advanced/expert` 难度优先),倒逼 agent 纠错
+
 ## reference 生成要点
 - `define_problem.intent_understanding` = `<source_process>.name` + 显性诉求
 - `define_problem.implicit_needs` = `<source_process>.outputs` 的 name 列表

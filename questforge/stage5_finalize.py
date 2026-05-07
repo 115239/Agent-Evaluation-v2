@@ -15,10 +15,11 @@ from __future__ import annotations
 import json
 import logging
 import re
+import statistics
 from collections import Counter
 from itertools import combinations
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import pandas as pd
 
@@ -565,6 +566,124 @@ def _traceability(
     return out
 
 
+# ========== 分群聚合(借鉴 Future AGI mean/p90/by_*)==========
+def _quantile(sorted_values: list[float], q: float) -> float:
+    if not sorted_values:
+        return 0.0
+    if len(sorted_values) == 1:
+        return float(sorted_values[0])
+    pos = q * (len(sorted_values) - 1)
+    lo = int(pos)
+    hi = min(lo + 1, len(sorted_values) - 1)
+    frac = pos - lo
+    return float(sorted_values[lo] + (sorted_values[hi] - sorted_values[lo]) * frac)
+
+
+def _stats(values: list[float]) -> dict[str, Any]:
+    if not values:
+        return {"count": 0}
+    sv = sorted(values)
+    n = len(sv)
+    return {
+        "count": n,
+        "mean": round(statistics.mean(sv), 2),
+        "median": round(statistics.median(sv), 2),
+        "min": round(sv[0], 2),
+        "max": round(sv[-1], 2),
+        "p25": round(_quantile(sv, 0.25), 2),
+        "p75": round(_quantile(sv, 0.75), 2),
+        "p90": round(_quantile(sv, 0.90), 2),
+        "stdev": round(statistics.stdev(sv), 2) if n > 1 else 0.0,
+    }
+
+
+def _aggregate_subset(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {"count": 0}
+    diff_scores = [float(r["difficulty_score"]) for r in rows]
+    constr = [int(r["constraint_count"]) for r in rows]
+    interf = [int(r["interference_count"]) for r in rows]
+    est_d = [float(r["est_D"]) for r in rows]
+    passed = sum(1 for r in rows if r["passed"])
+    diff_dist = dict(Counter(r["difficulty"] for r in rows))
+    return {
+        "count": len(rows),
+        "test_ids": [r["test_id"] for r in rows],
+        "passed_rate": round(passed / len(rows), 2),
+        "difficulty_distribution": diff_dist,
+        "difficulty_score": _stats(diff_scores),
+        "constraint_count": _stats([float(c) for c in constr]),
+        "interference_count": _stats([float(c) for c in interf]),
+        "est_D": _stats(est_d),
+    }
+
+
+def _group_single(
+    rows: list[dict[str, Any]], key_fn: Callable[[dict[str, Any]], str]
+) -> dict[str, dict[str, Any]]:
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for r in rows:
+        key = key_fn(r) or "(unknown)"
+        groups.setdefault(key, []).append(r)
+    return {k: _aggregate_subset(v) for k, v in sorted(groups.items())}
+
+
+def _group_multi(
+    rows: list[dict[str, Any]], key_fn: Callable[[dict[str, Any]], list[str]]
+) -> dict[str, dict[str, Any]]:
+    """一行可能进入多个组(例:一道题对应多个 user_group)。"""
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for r in rows:
+        keys = key_fn(r) or []
+        for key in keys:
+            groups.setdefault(key, []).append(r)
+    return {k: _aggregate_subset(v) for k, v in sorted(groups.items())}
+
+
+def _compute_aggregations(
+    items: list[dict[str, Any]],
+    *,
+    tctx_by_id: dict[str, dict[str, Any]],
+    process_by_id: dict[str, dict[str, Any]],
+    user_group_by_id: dict[str, dict[str, Any]],
+    validation: dict[str, dict[str, Any]],
+    discrimination: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    rows: list[dict[str, Any]] = []
+    for item in items:
+        tid = item["test_id"]
+        tctx = tctx_by_id.get(tid, {})
+        proc = process_by_id.get(item.get("source_process") or "", {})
+        ugs = [
+            actor.get("id") or ""
+            for actor in proc.get("actors") or []
+            if (actor.get("id") or "") in user_group_by_id
+        ]
+        primary_assets = tctx.get("primary_assets") or []
+        rows.append(
+            {
+                "test_id": tid,
+                "difficulty": item.get("difficulty") or "unknown",
+                "difficulty_score": float(item.get("difficulty_score") or 0),
+                "constraint_count": len(tctx.get("constraints") or []),
+                "interference_count": len(tctx.get("interferences") or []),
+                "est_D": float((discrimination.get(tid) or {}).get("est_D") or 0),
+                "passed": bool((validation.get(tid) or {}).get("passed")),
+                "user_groups": _unique_preserve([u for u in ugs if u]),
+                "source_process": item.get("source_process") or "",
+                "primary_asset": primary_assets[0] if primary_assets else "",
+            }
+        )
+
+    return {
+        "global": _aggregate_subset(rows),
+        "by_difficulty": _group_single(rows, lambda r: r["difficulty"]),
+        "by_user_group": _group_multi(rows, lambda r: r["user_groups"]),
+        "by_source_process": _group_single(rows, lambda r: r["source_process"]),
+        "by_primary_asset": _group_single(rows, lambda r: r["primary_asset"]),
+    }
+
+
 def _build_dataset_items(
     items: list[dict[str, Any]],
     *,
@@ -882,6 +1001,74 @@ def _render_independence_section(
     return "\n".join(lines)
 
 
+def _render_aggregations_section(aggregations: dict[str, Any]) -> str:
+    g = aggregations.get("global") or {}
+    by_diff = aggregations.get("by_difficulty") or {}
+    by_ug = aggregations.get("by_user_group") or {}
+
+    lines: list[str] = []
+    if g.get("count"):
+        diff_dist = g.get("difficulty_distribution") or {}
+        ds = g.get("difficulty_score") or {}
+        ed = g.get("est_D") or {}
+        lines.append(
+            f"- 全集 {g['count']} 道,passed_rate={g.get('passed_rate', 0)},难度分布={diff_dist}"
+        )
+        lines.append(
+            f"- difficulty_score: mean={ds.get('mean', 0)} / median={ds.get('median', 0)}"
+            f" / p25={ds.get('p25', 0)} / p75={ds.get('p75', 0)} / p90={ds.get('p90', 0)}"
+        )
+        lines.append(
+            f"- est_D: mean={ed.get('mean', 0)} / p25={ed.get('p25', 0)} / p75={ed.get('p75', 0)}"
+        )
+        lines.append(f"- 完整数据见 `dataset_supplementary/aggregations.json`")
+    else:
+        lines.append("- (无题目可聚合)")
+    lines.append("")
+
+    if by_diff:
+        lines.append("**按难度分群**")
+        rows_d = [
+            [
+                k,
+                v.get("count", 0),
+                v.get("passed_rate", 0),
+                (v.get("difficulty_score") or {}).get("mean", 0),
+                (v.get("constraint_count") or {}).get("mean", 0),
+                (v.get("interference_count") or {}).get("mean", 0),
+                (v.get("est_D") or {}).get("mean", 0),
+            ]
+            for k, v in by_diff.items()
+        ]
+        lines.append(
+            md_table(
+                ["difficulty", "count", "passed_rate", "diff_score.mean", "约束.mean", "干扰.mean", "est_D.mean"],
+                rows_d,
+            )
+        )
+
+    if by_ug:
+        lines.append("")
+        lines.append("**按用户画像分群**(每道题可能命中多个 UG)")
+        rows_u = [
+            [
+                k,
+                v.get("count", 0),
+                v.get("passed_rate", 0),
+                (v.get("difficulty_score") or {}).get("mean", 0),
+                (v.get("est_D") or {}).get("mean", 0),
+            ]
+            for k, v in by_ug.items()
+        ]
+        lines.append(
+            md_table(
+                ["user_group", "count", "passed_rate", "diff_score.mean", "est_D.mean"],
+                rows_u,
+            )
+        )
+    return "\n".join(lines)
+
+
 def run(stage4_md: Path | str, out_dir: Path | None, agent_input: AgentInput) -> Path:
     out_dir = Path(out_dir) if out_dir else config.ensure_out_dir(agent_input.out_dir)
     out_path = out_dir / "05_report.md"
@@ -942,6 +1129,14 @@ def run(stage4_md: Path | str, out_dir: Path | None, agent_input: AgentInput) ->
         user_group_by_id=user_group_by_id,
         asset_by_id=asset_by_id,
     )
+    aggregations = _compute_aggregations(
+        items,
+        tctx_by_id=tctx_by_id,
+        process_by_id=process_by_id,
+        user_group_by_id=user_group_by_id,
+        validation=validation,
+        discrimination=discrimination,
+    )
 
     dataset_items = _build_dataset_items(
         items,
@@ -983,6 +1178,7 @@ def run(stage4_md: Path | str, out_dir: Path | None, agent_input: AgentInput) ->
         {item["test_id"]: item.get("rubric") or {} for item in dataset_items},
     )
     _write_json(supplementary_dir / "traceability.json", traceability)
+    _write_json(supplementary_dir / "aggregations.json", aggregations)
     _write_dataset_excel(
         dataset_xlsx_path,
         dataset_items,
@@ -1018,6 +1214,7 @@ def run(stage4_md: Path | str, out_dir: Path | None, agent_input: AgentInput) ->
             "独立性评分",
             _render_independence_section(independence_score, most_overlapping_pair, pair_details),
         ),
+        Section("分群聚合统计", _render_aggregations_section(aggregations)),
         Section(
             "最终产物清单",
             "\n".join(
@@ -1049,6 +1246,7 @@ def run(stage4_md: Path | str, out_dir: Path | None, agent_input: AgentInput) ->
             "most_overlapping_pair": most_overlapping_pair,
             "pair_details": pair_details,
         },
+        "aggregations": aggregations,
         "dataset_meta": dataset_meta,
     }
 
