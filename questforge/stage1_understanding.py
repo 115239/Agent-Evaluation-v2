@@ -13,16 +13,41 @@ from pathlib import Path
 from typing import Any
 
 from . import config
-from .common import Checklist, IdCounter, Section, iso_now, md_table, truncate, write_md
+from .common import Checklist, IdCounter, Section, iso_now, md_table, read_md, truncate, write_md
 from .input_spec import AgentInput, MissingField, MissingInputError, SampleFileConfig
-from .io_utils import load_kb, load_sample_usecases, summarize_kb
+from .io_utils import (
+    SUPPORTED_EXTS,
+    UnsupportedFormatError,
+    load_kb,
+    load_sample_usecases,
+    summarize_kb,
+)
 from .llm_client import LLMClient, get_default_client
 
 log = logging.getLogger("questforge.stage1")
 
 
 # ========== 资产扫描 & 识别 ==========
-_ASSET_EXTS = {".xlsx", ".xls", ".xlsm", ".csv", ".docx", ".doc"}
+_ASSET_EXTS = set(SUPPORTED_EXTS)
+
+
+def _probe_best_sheet(path: Path) -> str:
+    try:
+        import openpyxl  # type: ignore
+
+        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+        best_sheet = None
+        best_rows = -1
+        for s in wb.sheetnames:
+            ws = wb[s]
+            if ws.max_row > best_rows:
+                best_rows = ws.max_row
+                best_sheet = s
+        wb.close()
+        return best_sheet or "Sheet1"
+    except Exception as e:
+        log.warning("探测 sheet 失败(%s):%s;默认使用 Sheet1", path.name, e)
+        return "Sheet1"
 
 
 def _probe_asset(path: Path) -> dict[str, Any]:
@@ -36,40 +61,37 @@ def _probe_asset(path: Path) -> dict[str, Any]:
         "rows": 0,
         "columns": [],
         "sample_rows": [],
+        "load_error": "",
     }
-    if path.suffix.lower() in {".xlsx", ".xls", ".xlsm"}:
-        try:
-            import openpyxl  # type: ignore
-
-            wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
-            # 选行数最多的 sheet
-            best_sheet = None
-            best_rows = -1
-            for s in wb.sheetnames:
-                ws = wb[s]
-                if ws.max_row > best_rows:
-                    best_rows = ws.max_row
-                    best_sheet = s
-            wb.close()
-            sheet = best_sheet or "Sheet1"
-        except Exception as e:
-            log.warning("探测 sheet 失败(%s):%s;默认使用 Sheet1", path.name, e)
-            sheet = "Sheet1"
-        df = load_kb(path, sheet)
-        sample_rows = df.head(3).to_dict(orient="records")
-        for row in sample_rows:
-            for k, v in list(row.items()):
-                if isinstance(v, str) and len(v) > 150:
-                    row[k] = v[:150] + "…"
-        info.update(
-            sheet=sheet,
-            rows=int(len(df)),
-            columns=list(df.columns),
-            sample_rows=sample_rows,
-        )
+    ext = path.suffix.lower()
+    if ext in {".xlsx", ".xls", ".xlsm"}:
+        sheet = _probe_best_sheet(path)
     else:
-        # docx / csv 暂时仅记录文件名,LLM 也只能看到文件名
-        info["sheet"] = "N/A"
+        sheet = "main"
+
+    try:
+        df = load_kb(path, sheet)
+    except UnsupportedFormatError as e:
+        info["sheet"] = sheet
+        info["load_error"] = str(e)
+        return info
+    except Exception as e:
+        log.warning("加载资产失败 %s:%s", path.name, e)
+        info["sheet"] = sheet
+        info["load_error"] = f"加载失败: {e}"
+        return info
+
+    sample_rows = df.head(3).to_dict(orient="records")
+    for row in sample_rows:
+        for k, v in list(row.items()):
+            if isinstance(v, str) and len(v) > 150:
+                row[k] = v[:150] + "…"
+    info.update(
+        sheet=sheet,
+        rows=int(len(df)),
+        columns=list(df.columns),
+        sample_rows=sample_rows,
+    )
     return info
 
 
@@ -156,6 +178,7 @@ def _llm_extract(
     agent_input: AgentInput,
     kb_cards: list[dict[str, Any]],
     sample_usecases: dict[str, list[dict[str, Any]]],
+    docs_excerpt: str = "",
 ) -> dict[str, Any]:
     system_path = config.REPO_ROOT / "questforge/prompts/stage1_business.txt"
     system = system_path.read_text(encoding="utf-8")
@@ -180,10 +203,13 @@ def _llm_extract(
         for label, items in sample_usecases.items()
     }
 
+    prd_block = docs_excerpt.strip() or "(未提供 docs_dir,无 PRD 节选)"
+
     user = (
         f"<domain>{agent_input.domain}</domain>\n"
         f"<business_goal>{agent_input.business_goal}</business_goal>\n"
         f"<weak_points>{json.dumps(agent_input.weak_points, ensure_ascii=False)}</weak_points>\n"
+        f"<prd_excerpt>\n{prd_block}\n</prd_excerpt>\n"
         f"<knowledge_assets>{json.dumps(kb_brief, ensure_ascii=False)}</knowledge_assets>\n"
         f"<sample_queries>{json.dumps(sample_brief, ensure_ascii=False)}</sample_queries>\n"
         f"<glossary_seed>{json.dumps(agent_input.glossary_seed, ensure_ascii=False)}</glossary_seed>\n"
@@ -369,6 +395,44 @@ def run(agent_input: AgentInput, out_dir: Path) -> Path:
             ],
         )
 
+    # 2.1 过滤加载失败的资产(load_error 非空意味着扩展名不支持/编码错误/依赖缺失)
+    load_failures = [a for a in assets_raw if a.get("load_error")]
+    if load_failures:
+        raise MissingInputError(
+            stage="Stage 1 · 业务理解",
+            report=[
+                MissingField(
+                    field_name=f"data_dir/{a['file_display']}",
+                    why_needed=f"资产解析失败:{a['load_error']}",
+                    suggested_format=(
+                        "确认扩展名 ∈ "
+                        f"{sorted(_ASSET_EXTS)};必要时安装可选依赖(python-docx / pypdf)"
+                        " 或将老 .doc 另存为 .docx"
+                    ),
+                    example=f"加载失败:{a['file_display']}",
+                )
+                for a in load_failures
+            ],
+            hint=f"共 {len(load_failures)} 个资产加载失败。",
+        )
+
+    # 2.2 排除 rows=0 的空资产(LLM 也无法基于空列头分类)
+    empty_assets = [a for a in assets_raw if a["rows"] == 0]
+    if empty_assets:
+        raise MissingInputError(
+            stage="Stage 1 · 业务理解",
+            report=[
+                MissingField(
+                    field_name=f"data_dir/{a['file_display']}",
+                    why_needed="资产读取后 0 行,无法用于建索引(可能正文为空、PDF 为扫描版、或 docx 全为短碎片)",
+                    suggested_format="确认文件含有实际内容;扫描版 PDF 需 OCR 处理后转文本",
+                    example=f"空资产:{a['file_display']}",
+                )
+                for a in empty_assets
+            ],
+            hint=f"共 {len(empty_assets)} 个资产 rows=0。",
+        )
+
     # --- 3. LLM 分类每个资产 ---
     kb_cards: list[dict[str, Any]] = []
     failed_assets: list[str] = []
@@ -423,7 +487,15 @@ def run(agent_input: AgentInput, out_dir: Path) -> Path:
     log.info("[Stage1] 样例数据:%s", {k: len(v) for k, v in sample_usecases.items()})
 
     # --- 5. LLM 抽取 user_groups / features / glossary ---
-    llm_out = _llm_extract(client, agent_input, kb_cards, sample_usecases)
+    docs_excerpt = ""
+    phase0_path = Path(out_dir) / "00_input_assessment.md"
+    if phase0_path.exists():
+        try:
+            phase0_doc = read_md(phase0_path)
+            docs_excerpt = str(phase0_doc["artifacts"].get("docs_text_excerpt") or "")
+        except Exception as e:
+            log.warning("读取 00_input_assessment.md 的 docs_text_excerpt 失败:%s", e)
+    llm_out = _llm_extract(client, agent_input, kb_cards, sample_usecases, docs_excerpt=docs_excerpt)
     if not isinstance(llm_out, dict) or not llm_out:
         raise MissingInputError(
             stage="Stage 1 · 业务理解",

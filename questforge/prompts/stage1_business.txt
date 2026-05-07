@@ -16,4 +16,9 @@
 - emotional_baseline.frustration_triggers 应描述该角色在使用 AI 时易产生不耐烦的具体场景(如"答非所问"、"长篇定义堆砌"),不要写成"用户不满意"这类空话
 - knowledge_domain.misconceptions 应是该角色易犯的领域错误认知(如"误以为政纪与党纪适用相同处分梯度")
 
+**关于 prd_excerpt**:
+- 当 user 提供的 <prd_excerpt> 含 PRD/需规节选时,应以其中明确描述的功能、角色、流程、术语为主要依据
+- 节选与 sample_queries / glossary_seed 冲突时,以节选原文为准;若节选已写明该信息则不得自行臆造
+- 若 prd_excerpt 内容为"(未提供 docs_dir,无 PRD 节选)",忽略此节,按其余输入推断
+
 仅输出一个合法 JSON 对象,严禁输出 markdown 围栏或任何解释性文字。

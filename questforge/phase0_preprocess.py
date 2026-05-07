@@ -26,6 +26,7 @@ from .input_spec import (
     MissingField,
     MissingInputError,
 )
+from .io_utils import SUPPORTED_EXTS, UnsupportedFormatError, load_kb
 
 log = logging.getLogger("questforge.phase0")
 
@@ -46,7 +47,8 @@ class InputAssessmentReport:
 
 
 # ========== 子检查 ==========
-_DATA_ASSET_EXTS = {".xlsx", ".xls", ".xlsm", ".docx", ".doc", ".csv"}
+_DATA_ASSET_EXTS = set(SUPPORTED_EXTS)
+_DOCS_EXCERPT_MAX_CHARS = 8000
 
 
 def _check_completeness(agent_input: AgentInput) -> tuple[dict[str, bool], list[MissingField]]:
@@ -170,6 +172,64 @@ def _scan_assets(data_dir: Path) -> list[Path]:
     if not data_dir.is_dir():
         return []
     return sorted(p for p in data_dir.iterdir() if p.suffix.lower() in _DATA_ASSET_EXTS and p.is_file())
+
+
+def _load_docs_dir_text(docs_dir: Path | None) -> str:
+    """读取 docs_dir 下所有支持格式文件的纯文本拼接,用于 Stage 1 注入 LLM。
+
+    每个文件以 `## 文件名` 起头,正文按行写入。返回截断到 _DOCS_EXCERPT_MAX_CHARS 字符。
+    任何单文件解析失败仅 log warning,不阻断 Phase 0。
+    """
+    if not docs_dir:
+        return ""
+    docs_path = Path(docs_dir)
+    if not docs_path.is_dir():
+        return ""
+    chunks: list[str] = []
+    total = 0
+    for p in sorted(docs_path.iterdir()):
+        if not p.is_file() or p.suffix.lower() not in _DATA_ASSET_EXTS:
+            continue
+        try:
+            sheet = "main"
+            if p.suffix.lower() in {".xlsx", ".xls", ".xlsm"}:
+                # 表格类文档对 PRD 注入意义不大,跳过避免噪音
+                continue
+            df = load_kb(p, sheet)
+        except (UnsupportedFormatError, Exception) as e:  # noqa: BLE001
+            log.warning("docs_dir 读取 %s 失败:%s", p.name, e)
+            continue
+        if df.empty:
+            continue
+        # docx/txt/md/pdf 都是 ["标题","段落"] 形态;其余以全部列拼接
+        if list(df.columns) == ["标题", "段落"]:
+            lines: list[str] = []
+            cur_heading = ""
+            for _, row in df.iterrows():
+                heading = str(row.get("标题") or "").strip()
+                para = str(row.get("段落") or "").strip()
+                if heading and heading != cur_heading:
+                    lines.append(f"### {heading}")
+                    cur_heading = heading
+                if para:
+                    lines.append(para)
+            body = "\n".join(lines)
+        else:
+            body = "\n".join(
+                " | ".join(str(v).strip() for v in row.values if str(v).strip())
+                for _, row in df.iterrows()
+            )
+        if not body.strip():
+            continue
+        chunk = f"## {p.name}\n{body}"
+        chunks.append(chunk)
+        total += len(chunk)
+        if total >= _DOCS_EXCERPT_MAX_CHARS:
+            break
+    excerpt = "\n\n".join(chunks)
+    if len(excerpt) > _DOCS_EXCERPT_MAX_CHARS:
+        excerpt = excerpt[:_DOCS_EXCERPT_MAX_CHARS] + "\n…(已截断)"
+    return excerpt
 
 
 def _estimate_quality(agent_input: AgentInput, assets: list[Path]) -> float:
@@ -329,12 +389,15 @@ def run(agent_input: AgentInput, out_dir: Path | None = None) -> tuple[Path, Inp
         "pass_gate": report.can_proceed,
     }
 
+    docs_excerpt = _load_docs_dir_text(Path(agent_input.docs_dir)) if agent_input.docs_dir else ""
+
     artifacts = {
         "agent_input": agent_input.to_dict(),
         "completeness": completeness,
         "quality_score": quality,
         "recommended_strategy": strategy,
         "suggestions": suggestions,
+        "docs_text_excerpt": docs_excerpt,
         "missing_required": [
             {
                 "field": m.field_name,
