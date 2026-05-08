@@ -30,6 +30,7 @@ from . import (
     stage3_context,
     stage4_questions,
     stage5_finalize,
+    stage6_self_eval,
 )
 from .common import read_md
 from .input_spec import AgentInput, MissingField, MissingInputError
@@ -82,8 +83,8 @@ def main() -> int:
     parser.add_argument(
         "--only",
         default=None,
-        choices=["stage0", "stage1", "stage2", "stage3", "stage4", "stage5"],
-        help="仅运行指定阶段(上游 MD 必须已存在)",
+        choices=["stage0", "stage1", "stage2", "stage3", "stage4", "stage5", "stage6"],
+        help="仅运行指定阶段(上游 MD 必须已存在);stage6 是可选的先验自检,默认全链不跑",
     )
     args = parser.parse_args()
 
@@ -121,6 +122,7 @@ def main() -> int:
     stage3_path = effective_out / "03_context.md"
     stage4_path = effective_out / "04_tests.md"
     stage5_path = effective_out / "05_report.md"
+    stage6_path = effective_out / "06_self_eval.md"
 
     try:
         only = args.only  # None 表示跑全链
@@ -166,6 +168,15 @@ def main() -> int:
             if read_md(stage5_path)["frontmatter"].get("pass_gate") is not True:
                 log.error("[Pipeline] Stage 5 最终验收未通过,请查看 %s", stage5_path)
                 return EXIT_GENERIC_ERROR
+
+        if only == "stage6":
+            if not stage4_path.exists():
+                raise FileNotFoundError(f"缺少上游 {stage4_path},请先跑 stage4")
+            _require_pass_gate(stage4_path, "Stage 6 前置校验")
+            log.info("=== Stage 6 · 先验答题模拟自检 ===")
+            stage6_path = stage6_self_eval.run(stage4_path, effective_out, agent_input)
+            if read_md(stage6_path)["frontmatter"].get("pass_gate") is not True:
+                log.warning("[Pipeline] Stage 6 自检未达标,详见 %s(不阻塞 dataset 已发版)", stage6_path)
 
         log.info(
             "[Pipeline] 完成,产物:\n  %s\n  %s\n  %s\n  %s\n  %s\n  %s",

@@ -1,4 +1,21 @@
 我自己的杂记。写代码是不需要参考。
+# 0502
+复现 future-agi 整个项目，哪些环境变量是必需的  请指出 你能获取的 你=你就自己获取，不能自己获取的列出来获取的流程，我来获取 获取之后贴到相应位置。
+
+future-agi 对于 questforge 有哪些可以参考的地方？
+特别是 用户画像 和 评价指标 这两方面
+MD文档/future-agi.md 这个是future-agi的全流程MD文档，你可以同时参考MD文档和代码。  因为文档可能没有代码那么细节。
+
+
+Docx 文档不能读
+
+针对现在的流程，对于约束干扰和业务流程提取这两个流程进行优化进行优化：
+
+
+
+借鉴 future agi 的用户画像 和 评价指标这两方面
+数据理解能力增强，添加了docx文档和PDF文档的读取
+优化约束干扰和业务流程提取这两个流程
 # 0422
 参考 题目生成Agent设计文档.md 设计文档中第四大节中的内容，实现其 stage 5
 完成验证和最终的数据集 benchmark
@@ -14,7 +31,7 @@ stage 4 题目合成参考 /Users/sin/Documents/Data/ccic/0320_data_ljtl_wblj/da
 # 0420
 
 大模型 openrouter 配置：
-OPENROUTER_API_KEY=sk-or-v1-<your-openrouter-key>
+OPENROUTER_API_KEY=
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 anthropic/claude-opus-4.6
 google/gemini-3.1-pro-preview

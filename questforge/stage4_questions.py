@@ -109,7 +109,7 @@ def _build_tasks(
     return tasks
 
 
-def _build_user_payload(task: dict[str, Any], glossary: dict[str, str]) -> str:
+def _build_user_payload(task: dict[str, Any], glossary: dict[str, str], personas_by_ug: dict[str, dict[str, Any]] | None = None) -> str:
     """组装单题 user 消息。领域词用 glossary 的 top-N 个键值对。"""
     tctx = task["test_ctx"]
     rep = task["rep_process"]
@@ -142,6 +142,24 @@ def _build_user_payload(task: dict[str, Any], glossary: dict[str, str]) -> str:
         "cross_process_dependency": rep.get("cross_process_dependency", "单流程"),
     }
     brief_gloss = dict(list(glossary.items())[:20])
+
+    # 把当前流程涉及的 user_group + persona 装到 payload 里供 prompt 风格化
+    user_personas: list[dict[str, Any]] = []
+    if personas_by_ug:
+        for actor in rep.get("actors") or []:
+            ug_id = (actor.get("id") or "").strip()
+            if not ug_id:
+                continue
+            ug = personas_by_ug.get(ug_id)
+            if not ug:
+                continue
+            user_personas.append(
+                {
+                    "id": ug.get("id"),
+                    "role": ug.get("role"),
+                    "persona": ug.get("persona") or {},
+                }
+            )
 
     schema = {
         "test_id": task["test_id"],
@@ -208,6 +226,7 @@ def _build_user_payload(task: dict[str, Any], glossary: dict[str, str]) -> str:
     return (
         f"<stage3_test_context>{json.dumps(brief_tctx, ensure_ascii=False)}</stage3_test_context>\n"
         f"<source_process>{json.dumps(brief_proc, ensure_ascii=False)}</source_process>\n"
+        f"<user_personas>{json.dumps(user_personas, ensure_ascii=False)}</user_personas>\n"
         f"<glossary>{json.dumps(brief_gloss, ensure_ascii=False)}</glossary>\n"
         f"<domain>{task['domain']}</domain>\n"
         f"<difficulty>{task['difficulty']}</difficulty>\n"
@@ -226,13 +245,14 @@ def _generate_one(
     system_prompt: str,
     glossary: dict[str, str],
     program_start: float,
+    personas_by_ug: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[dict[str, Any] | None, str]:
     tid = task["test_id"]
     t0 = time.time()
     elapsed = t0 - program_start
     log.info("[Stage4][DIAG] T+%.0fs | API开始 | %s | difficulty=%s", elapsed, tid, task["difficulty"])
 
-    user = _build_user_payload(task, glossary)
+    user = _build_user_payload(task, glossary, personas_by_ug=personas_by_ug)
     raw = client.chat_json(
         system_prompt,
         user,
@@ -616,6 +636,7 @@ def run(stage3_md: Path | str, out_dir: Path | None, agent_input: AgentInput) ->
     test_plan = art2.get("test_plan", [])
     plan_by_tid = {t["test_id"]: t for t in test_plan}
     glossary: dict[str, str] = art1.get("glossary", {})
+    personas_by_ug: dict[str, dict[str, Any]] = {ug["id"]: ug for ug in art1.get("user_groups", []) if ug.get("id")}
 
     # --- LLM 必备 ---
     client = get_default_client()
@@ -627,7 +648,7 @@ def run(stage3_md: Path | str, out_dir: Path | None, agent_input: AgentInput) ->
                     field_name="LLM_API_KEY",
                     why_needed="题目/期望/评分细则生成全部依赖 LLM,不做本地兜底",
                     suggested_format="配置 .env 里的 LLM_API_KEY",
-                    example="LLM_API_KEY=sk-xxx",
+                    example="LLM_API_KEY=<YOUR_API_KEY>",
                 )
             ],
         )
@@ -661,7 +682,7 @@ def run(stage3_md: Path | str, out_dir: Path | None, agent_input: AgentInput) ->
     if pending:
         with ThreadPoolExecutor(max_workers=config.STAGE4_MAX_WORKERS) as executor:
             futures = {
-                executor.submit(_generate_one, t, client, system_prompt, glossary, program_start): t["test_id"]
+                executor.submit(_generate_one, t, client, system_prompt, glossary, program_start, personas_by_ug): t["test_id"]
                 for t in pending
             }
             for fut in as_completed(futures):

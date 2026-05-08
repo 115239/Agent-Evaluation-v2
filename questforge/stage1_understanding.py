@@ -13,16 +13,41 @@ from pathlib import Path
 from typing import Any
 
 from . import config
-from .common import Checklist, IdCounter, Section, iso_now, md_table, truncate, write_md
+from .common import Checklist, IdCounter, Section, iso_now, md_table, read_md, truncate, write_md
 from .input_spec import AgentInput, MissingField, MissingInputError, SampleFileConfig
-from .io_utils import load_kb, load_sample_usecases, summarize_kb
+from .io_utils import (
+    SUPPORTED_EXTS,
+    UnsupportedFormatError,
+    load_kb,
+    load_sample_usecases,
+    summarize_kb,
+)
 from .llm_client import LLMClient, get_default_client
 
 log = logging.getLogger("questforge.stage1")
 
 
 # ========== 资产扫描 & 识别 ==========
-_ASSET_EXTS = {".xlsx", ".xls", ".xlsm", ".csv", ".docx", ".doc"}
+_ASSET_EXTS = set(SUPPORTED_EXTS)
+
+
+def _probe_best_sheet(path: Path) -> str:
+    try:
+        import openpyxl  # type: ignore
+
+        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+        best_sheet = None
+        best_rows = -1
+        for s in wb.sheetnames:
+            ws = wb[s]
+            if ws.max_row > best_rows:
+                best_rows = ws.max_row
+                best_sheet = s
+        wb.close()
+        return best_sheet or "Sheet1"
+    except Exception as e:
+        log.warning("探测 sheet 失败(%s):%s;默认使用 Sheet1", path.name, e)
+        return "Sheet1"
 
 
 def _probe_asset(path: Path) -> dict[str, Any]:
@@ -36,40 +61,37 @@ def _probe_asset(path: Path) -> dict[str, Any]:
         "rows": 0,
         "columns": [],
         "sample_rows": [],
+        "load_error": "",
     }
-    if path.suffix.lower() in {".xlsx", ".xls", ".xlsm"}:
-        try:
-            import openpyxl  # type: ignore
-
-            wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
-            # 选行数最多的 sheet
-            best_sheet = None
-            best_rows = -1
-            for s in wb.sheetnames:
-                ws = wb[s]
-                if ws.max_row > best_rows:
-                    best_rows = ws.max_row
-                    best_sheet = s
-            wb.close()
-            sheet = best_sheet or "Sheet1"
-        except Exception as e:
-            log.warning("探测 sheet 失败(%s):%s;默认使用 Sheet1", path.name, e)
-            sheet = "Sheet1"
-        df = load_kb(path, sheet)
-        sample_rows = df.head(3).to_dict(orient="records")
-        for row in sample_rows:
-            for k, v in list(row.items()):
-                if isinstance(v, str) and len(v) > 150:
-                    row[k] = v[:150] + "…"
-        info.update(
-            sheet=sheet,
-            rows=int(len(df)),
-            columns=list(df.columns),
-            sample_rows=sample_rows,
-        )
+    ext = path.suffix.lower()
+    if ext in {".xlsx", ".xls", ".xlsm"}:
+        sheet = _probe_best_sheet(path)
     else:
-        # docx / csv 暂时仅记录文件名,LLM 也只能看到文件名
-        info["sheet"] = "N/A"
+        sheet = "main"
+
+    try:
+        df = load_kb(path, sheet)
+    except UnsupportedFormatError as e:
+        info["sheet"] = sheet
+        info["load_error"] = str(e)
+        return info
+    except Exception as e:
+        log.warning("加载资产失败 %s:%s", path.name, e)
+        info["sheet"] = sheet
+        info["load_error"] = f"加载失败: {e}"
+        return info
+
+    sample_rows = df.head(3).to_dict(orient="records")
+    for row in sample_rows:
+        for k, v in list(row.items()):
+            if isinstance(v, str) and len(v) > 150:
+                row[k] = v[:150] + "…"
+    info.update(
+        sheet=sheet,
+        rows=int(len(df)),
+        columns=list(df.columns),
+        sample_rows=sample_rows,
+    )
     return info
 
 
@@ -86,7 +108,17 @@ _JSON_SCHEMA_HINT_MAIN = """
 请严格按以下 JSON Schema 输出(仅一个 JSON 对象,不含 markdown 围栏):
 {
   "business_goal": {"success_metric": "string", "business_value": "string"},
-  "user_groups": [{"id": "UG-xxx", "role": "string", "responsibility": "string", "typical_query": "string"}],
+  "user_groups": [{
+    "id": "UG-xxx",
+    "role": "string",
+    "responsibility": "string",
+    "typical_query": "string",
+    "language_profile": {"formality": "formal|casual|mixed", "vocabulary": "simple|technical|mixed"},
+    "knowledge_domain": {"expert_areas": ["string"], "novice_areas": ["string"], "misconceptions": ["string"]},
+    "behavioral_pattern": {"interaction_style": "direct|exploratory|methodical", "info_need": "minimal|moderate|comprehensive"},
+    "emotional_baseline": {"stress_level": "low|medium|high", "frustration_triggers": ["string"]},
+    "goal_motivation": {"primary_goal": "solve|learn|validate|explore", "time_pressure": "urgent|moderate|none"}
+  }],
   "features":    [{"id": "FEAT-xxx", "name": "string", "input": "string", "output": "string", "depends_on": ["KB-xxx"]}],
   "glossary":    {"term": "definition"}
 }
@@ -94,6 +126,9 @@ _JSON_SCHEMA_HINT_MAIN = """
 - business_goal.one_liner 已由用户提供,不必再输出;只输出 success_metric 与 business_value
 - depends_on 只能引用输入中给出的 KB ID
 - 若 samples 里有真实用户原话,user_groups.typical_query 必须引用原文
+- user_groups 的 5 个 persona 子字段(language_profile/knowledge_domain/behavioral_pattern/emotional_baseline/goal_motivation)均为枚举值,
+  无明确证据时用 "NOT_SPECIFIED"(对枚举字段)或空数组(对列表字段)
+- emotional_baseline.frustration_triggers 与 knowledge_domain.misconceptions 是后续阶段干扰生成与 prompt 风格化的种子,尽量给出 1-3 条具体描述
 """
 
 
@@ -143,6 +178,7 @@ def _llm_extract(
     agent_input: AgentInput,
     kb_cards: list[dict[str, Any]],
     sample_usecases: dict[str, list[dict[str, Any]]],
+    docs_excerpt: str = "",
 ) -> dict[str, Any]:
     system_path = config.REPO_ROOT / "questforge/prompts/stage1_business.txt"
     system = system_path.read_text(encoding="utf-8")
@@ -167,10 +203,13 @@ def _llm_extract(
         for label, items in sample_usecases.items()
     }
 
+    prd_block = docs_excerpt.strip() or "(未提供 docs_dir,无 PRD 节选)"
+
     user = (
         f"<domain>{agent_input.domain}</domain>\n"
         f"<business_goal>{agent_input.business_goal}</business_goal>\n"
         f"<weak_points>{json.dumps(agent_input.weak_points, ensure_ascii=False)}</weak_points>\n"
+        f"<prd_excerpt>\n{prd_block}\n</prd_excerpt>\n"
         f"<knowledge_assets>{json.dumps(kb_brief, ensure_ascii=False)}</knowledge_assets>\n"
         f"<sample_queries>{json.dumps(sample_brief, ensure_ascii=False)}</sample_queries>\n"
         f"<glossary_seed>{json.dumps(agent_input.glossary_seed, ensure_ascii=False)}</glossary_seed>\n"
@@ -180,6 +219,70 @@ def _llm_extract(
 
 
 # ========== 归一化 ==========
+_PERSONA_ENUMS: dict[str, set[str]] = {
+    "language_profile.formality": {"formal", "casual", "mixed"},
+    "language_profile.vocabulary": {"simple", "technical", "mixed"},
+    "behavioral_pattern.interaction_style": {"direct", "exploratory", "methodical"},
+    "behavioral_pattern.info_need": {"minimal", "moderate", "comprehensive"},
+    "emotional_baseline.stress_level": {"low", "medium", "high"},
+    "goal_motivation.primary_goal": {"solve", "learn", "validate", "explore"},
+    "goal_motivation.time_pressure": {"urgent", "moderate", "none"},
+}
+
+
+def _enum_or_unspecified(value: Any, allowed: set[str]) -> str:
+    s = (str(value or "")).strip().lower()
+    return s if s in allowed else "NOT_SPECIFIED"
+
+
+def _str_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(x).strip() for x in value if str(x).strip()]
+
+
+def _normalize_persona(raw: dict[str, Any]) -> dict[str, Any]:
+    """把 user_group 的 5 个 persona 子字段归一化到稳定枚举/列表。"""
+    lp = raw.get("language_profile") or {}
+    kd = raw.get("knowledge_domain") or {}
+    bp = raw.get("behavioral_pattern") or {}
+    eb = raw.get("emotional_baseline") or {}
+    gm = raw.get("goal_motivation") or {}
+    return {
+        "language_profile": {
+            "formality": _enum_or_unspecified(lp.get("formality"), _PERSONA_ENUMS["language_profile.formality"]),
+            "vocabulary": _enum_or_unspecified(lp.get("vocabulary"), _PERSONA_ENUMS["language_profile.vocabulary"]),
+        },
+        "knowledge_domain": {
+            "expert_areas": _str_list(kd.get("expert_areas")),
+            "novice_areas": _str_list(kd.get("novice_areas")),
+            "misconceptions": _str_list(kd.get("misconceptions")),
+        },
+        "behavioral_pattern": {
+            "interaction_style": _enum_or_unspecified(
+                bp.get("interaction_style"), _PERSONA_ENUMS["behavioral_pattern.interaction_style"]
+            ),
+            "info_need": _enum_or_unspecified(
+                bp.get("info_need"), _PERSONA_ENUMS["behavioral_pattern.info_need"]
+            ),
+        },
+        "emotional_baseline": {
+            "stress_level": _enum_or_unspecified(
+                eb.get("stress_level"), _PERSONA_ENUMS["emotional_baseline.stress_level"]
+            ),
+            "frustration_triggers": _str_list(eb.get("frustration_triggers")),
+        },
+        "goal_motivation": {
+            "primary_goal": _enum_or_unspecified(
+                gm.get("primary_goal"), _PERSONA_ENUMS["goal_motivation.primary_goal"]
+            ),
+            "time_pressure": _enum_or_unspecified(
+                gm.get("time_pressure"), _PERSONA_ENUMS["goal_motivation.time_pressure"]
+            ),
+        },
+    }
+
+
 def _normalize_user_groups(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
     counter = IdCounter("UG")
     normalized: list[dict[str, Any]] = []
@@ -190,6 +293,7 @@ def _normalize_user_groups(groups: list[dict[str, Any]]) -> list[dict[str, Any]]
                 "role": (g.get("role") or "").strip() or "未命名角色",
                 "responsibility": (g.get("responsibility") or "").strip(),
                 "typical_query": (g.get("typical_query") or "").strip(),
+                "persona": _normalize_persona(g),
             }
         )
     used: set[str] = set()
@@ -224,6 +328,34 @@ def _normalize_features(features: list[dict[str, Any]], kb_ids: set[str]) -> lis
 
 
 # ========== 主流程 ==========
+def _render_personas(user_groups: list[dict[str, Any]]) -> str:
+    if not user_groups:
+        return "(无 user_groups)"
+    rows = []
+    for u in user_groups:
+        p = u.get("persona") or {}
+        lp = p.get("language_profile") or {}
+        bp = p.get("behavioral_pattern") or {}
+        eb = p.get("emotional_baseline") or {}
+        gm = p.get("goal_motivation") or {}
+        kd = p.get("knowledge_domain") or {}
+        rows.append(
+            [
+                u["id"],
+                f"{lp.get('formality','-')}/{lp.get('vocabulary','-')}",
+                f"{bp.get('interaction_style','-')}/{bp.get('info_need','-')}",
+                f"{eb.get('stress_level','-')}",
+                "、".join((eb.get("frustration_triggers") or [])[:3]) or "—",
+                f"{gm.get('primary_goal','-')}/{gm.get('time_pressure','-')}",
+                "、".join((kd.get("misconceptions") or [])[:2]) or "—",
+            ]
+        )
+    return md_table(
+        ["ID", "语言风格", "行为", "压力", "情绪触发(摘录)", "目标/紧迫", "常见误解(摘录)"],
+        rows,
+    )
+
+
 def run(agent_input: AgentInput, out_dir: Path) -> Path:
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -242,7 +374,7 @@ def run(agent_input: AgentInput, out_dir: Path) -> Path:
                         "本 Pipeline 不提供领域默认值。"
                     ),
                     suggested_format="在 repo 根目录 `.env` 中设置环境变量",
-                    example="LLM_API_KEY=sk-xxx\nLLM_BASE_URL=https://...\nLLM_MODEL=qwen-plus",
+                    example="LLM_API_KEY=<YOUR_API_KEY>\nLLM_BASE_URL=https://...\nLLM_MODEL=qwen-plus",
                 )
             ],
             hint="检测到 LLM 客户端不可用。请配置 API key 后重跑。",
@@ -261,6 +393,44 @@ def run(agent_input: AgentInput, out_dir: Path) -> Path:
                     example=f"data_dir = {agent_input.data_dir}(当前为空或无匹配扩展名)",
                 )
             ],
+        )
+
+    # 2.1 过滤加载失败的资产(load_error 非空意味着扩展名不支持/编码错误/依赖缺失)
+    load_failures = [a for a in assets_raw if a.get("load_error")]
+    if load_failures:
+        raise MissingInputError(
+            stage="Stage 1 · 业务理解",
+            report=[
+                MissingField(
+                    field_name=f"data_dir/{a['file_display']}",
+                    why_needed=f"资产解析失败:{a['load_error']}",
+                    suggested_format=(
+                        "确认扩展名 ∈ "
+                        f"{sorted(_ASSET_EXTS)};必要时安装可选依赖(python-docx / pypdf)"
+                        " 或将老 .doc 另存为 .docx"
+                    ),
+                    example=f"加载失败:{a['file_display']}",
+                )
+                for a in load_failures
+            ],
+            hint=f"共 {len(load_failures)} 个资产加载失败。",
+        )
+
+    # 2.2 排除 rows=0 的空资产(LLM 也无法基于空列头分类)
+    empty_assets = [a for a in assets_raw if a["rows"] == 0]
+    if empty_assets:
+        raise MissingInputError(
+            stage="Stage 1 · 业务理解",
+            report=[
+                MissingField(
+                    field_name=f"data_dir/{a['file_display']}",
+                    why_needed="资产读取后 0 行,无法用于建索引(可能正文为空、PDF 为扫描版、或 docx 全为短碎片)",
+                    suggested_format="确认文件含有实际内容;扫描版 PDF 需 OCR 处理后转文本",
+                    example=f"空资产:{a['file_display']}",
+                )
+                for a in empty_assets
+            ],
+            hint=f"共 {len(empty_assets)} 个资产 rows=0。",
         )
 
     # --- 3. LLM 分类每个资产 ---
@@ -317,7 +487,15 @@ def run(agent_input: AgentInput, out_dir: Path) -> Path:
     log.info("[Stage1] 样例数据:%s", {k: len(v) for k, v in sample_usecases.items()})
 
     # --- 5. LLM 抽取 user_groups / features / glossary ---
-    llm_out = _llm_extract(client, agent_input, kb_cards, sample_usecases)
+    docs_excerpt = ""
+    phase0_path = Path(out_dir) / "00_input_assessment.md"
+    if phase0_path.exists():
+        try:
+            phase0_doc = read_md(phase0_path)
+            docs_excerpt = str(phase0_doc["artifacts"].get("docs_text_excerpt") or "")
+        except Exception as e:
+            log.warning("读取 00_input_assessment.md 的 docs_text_excerpt 失败:%s", e)
+    llm_out = _llm_extract(client, agent_input, kb_cards, sample_usecases, docs_excerpt=docs_excerpt)
     if not isinstance(llm_out, dict) or not llm_out:
         raise MissingInputError(
             stage="Stage 1 · 业务理解",
@@ -390,9 +568,17 @@ def run(agent_input: AgentInput, out_dir: Path) -> Path:
             "key_fields": c["key_fields"],
             "authority": c["authority"],
             "category": c["category"],
+            "columns": list(c.get("columns") or [])[:30],
+            "sample_rows": [
+                {k: truncate(str(v), 80) for k, v in (row or {}).items()}
+                for row in (c.get("sample_rows") or [])[:3]
+            ],
         }
         for c in kb_cards
     ]
+
+    # 截断到 ~4KB,供 Stage 2/3 复用原始文档摘要而无需重读 docs_dir
+    docs_digest = truncate(docs_excerpt, 4000) if docs_excerpt else ""
 
     artifacts = {
         "business_goal": business_goal,
@@ -400,6 +586,7 @@ def run(agent_input: AgentInput, out_dir: Path) -> Path:
         "features": features,
         "knowledge_assets": knowledge_assets,
         "glossary": glossary,
+        "docs_digest": docs_digest,
     }
 
     # --- 8. 校验清单 ---
@@ -445,6 +632,10 @@ def run(agent_input: AgentInput, out_dir: Path) -> Path:
                 ["ID", "角色", "职责", "典型诉求(原文示例)"],
                 [[u["id"], u["role"], u["responsibility"], truncate(u["typical_query"], 60)] for u in user_groups],
             ),
+        ),
+        Section(
+            "用户画像 · Persona 细分",
+            _render_personas(user_groups),
         ),
         Section(
             "核心功能清单",

@@ -111,11 +111,29 @@ STAGE3_CONSTRAINT_COUNT = {
 # 干扰密度硬规则(§4.5 Step 3.5)
 INTERFERENCE_DENSITY = {"basic": 0, "advanced": 1, "expert": 2}
 
-# expert 必须包含的"陷阱"标记词
+# expert 必须包含的"陷阱"标记词(兜底回填用,不再注入 prompt)
 TRAP_KEYWORDS = ["冲突", "过时", "看似合理"]
+
+# 干扰项 trap_kind 合法取值;LLM 必须为每条干扰标注其一
+TRAP_KIND_VOCAB = (
+    "version_conflict",
+    "role_mix",
+    "scope_creep",
+    "fuzzy_trigger",
+    "emotional_pressure",
+    "authority_overlap",
+    "none",
+)
+
+# 同题约束/干扰文本相似度上限;jaccard ≥ 该阈值视为重复指向同一失败点
+STAGE3_DESIGN_OVERLAP_THRESHOLD = 0.55
 
 # LLM 预算上限(Stage 3 关键字抽取 + 真实性判定合计,避免 offline 场景下爆调用)
 MAX_LLM_KEYWORD_CALLS = 20
+
+# 真实性三检验中"llm_judge"分支的独立预算;前两关命中率受 authority_keywords 收紧影响,
+# 故 fallback 调用次数会上升,需要比关键字抽取预算更高
+STAGE3_REALISM_LLM_BUDGET = 40
 
 
 # ========== Stage 4 参数(与领域无关) ==========
@@ -139,6 +157,15 @@ STAGE4_DIFFICULTY_SCORE_THRESHOLDS = {"basic": 1.5, "advanced": 2.3}
 
 # Stage 4 单题 LLM 最大 token(reference/rubric 较长, 需要比默认更大)
 STAGE4_LLM_MAX_TOKENS = 6000
+
+
+# ========== Stage 6 · 先验答题模拟自检(借鉴 Future AGI SimulatorAgent)==========
+# 每难度抽几道做自检(default 1,即每个难度 1 道,合计最多 3 道,控制 LLM 开销)
+STAGE6_SAMPLE_PER_DIFFICULTY = int(os.environ.get("QUESTFORGE_STAGE6_SAMPLE", "1"))
+# 每题需要 4 次 LLM 调用,并发上限略低于 Stage 4
+STAGE6_MAX_WORKERS = max(1, LLM_CONCURRENCY // 2)
+# diff_mean 通过门槛(rubric 区分能力下限)
+STAGE6_DIFF_PASS_THRESHOLD = float(os.environ.get("QUESTFORGE_STAGE6_DIFF_THR", "3.0"))
 
 
 # ========== 日志 ==========
@@ -167,11 +194,17 @@ __all__ = [
     "STAGE3_CONSTRAINT_COUNT",
     "INTERFERENCE_DENSITY",
     "TRAP_KEYWORDS",
+    "TRAP_KIND_VOCAB",
+    "STAGE3_DESIGN_OVERLAP_THRESHOLD",
     "MAX_LLM_KEYWORD_CALLS",
+    "STAGE3_REALISM_LLM_BUDGET",
     "STAGE4_MAX_WORKERS",
     "STAGE4_PROMPT_LEN",
     "STAGE4_STAGE_WEIGHTS",
     "STAGE4_DIFFICULTY_SCORE_THRESHOLDS",
     "STAGE4_LLM_MAX_TOKENS",
+    "STAGE6_SAMPLE_PER_DIFFICULTY",
+    "STAGE6_MAX_WORKERS",
+    "STAGE6_DIFF_PASS_THRESHOLD",
     "LOG_LEVEL",
 ]

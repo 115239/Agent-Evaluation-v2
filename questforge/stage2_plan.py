@@ -54,24 +54,43 @@ def _transcribe_user_processes(user_bps: list[dict[str, Any]]) -> list[dict[str,
 
 
 def _llm_processes(client: LLMClient, artifacts: dict[str, Any]) -> list[dict[str, Any]]:
-    """调用 LLM 按 `流程 = 用户 × 功能 × 业务目标` 推导业务流程。"""
+    """调用 LLM 按 `流程 = 用户 × 功能 × 业务目标` 推导业务流程。
+
+    注入 docs_digest、features.input/output、knowledge_assets sample_rows + columns,
+    让 LLM 看到原始文档与真实数据再推流程。
+    """
     system_path = config.REPO_ROOT / "questforge/prompts/stage2_process.txt"
     system = system_path.read_text(encoding="utf-8")
+    payload = {
+        "business_goal": artifacts.get("business_goal", {}),
+        "user_groups": artifacts.get("user_groups", []),
+        "features": [
+            {
+                "id": f.get("id"),
+                "name": f.get("name"),
+                "input": f.get("input"),
+                "output": f.get("output"),
+                "depends_on": f.get("depends_on"),
+            }
+            for f in artifacts.get("features", [])
+        ],
+        "knowledge_assets": [
+            {
+                "id": a["id"],
+                "category": a.get("category"),
+                "authority": a.get("authority"),
+                "key_fields": a.get("key_fields"),
+                "columns": (a.get("columns") or [])[:12],
+                "sample_rows": (a.get("sample_rows") or [])[:1],
+            }
+            for a in artifacts.get("knowledge_assets", [])
+        ],
+        "glossary_keys": list(artifacts.get("glossary", {}).keys())[:20],
+        "docs_digest": (artifacts.get("docs_digest") or "")[:3500],
+    }
     user = (
         "<stage1_artifacts>\n"
-        + json.dumps(
-            {
-                "business_goal": artifacts.get("business_goal", {}),
-                "user_groups": artifacts.get("user_groups", []),
-                "features": artifacts.get("features", []),
-                "knowledge_assets": [
-                    {k: a[k] for k in ("id", "category", "key_fields")}
-                    for a in artifacts.get("knowledge_assets", [])
-                ],
-                "glossary_keys": list(artifacts.get("glossary", {}).keys())[:20],
-            },
-            ensure_ascii=False,
-        )
+        + json.dumps(payload, ensure_ascii=False)
         + "\n</stage1_artifacts>\n"
         "请按如下 schema 输出 processes 列表(每条流程至少 3 个 step,标 inferred=true):\n"
         '{"processes":[{"id":"BP-xxx","name":"string",'
@@ -80,11 +99,183 @@ def _llm_processes(client: LLMClient, artifacts: dict[str, Any]) -> list[dict[st
         '"steps":[{"no":1,"name":"string"}],'
         '"outputs":[{"name":"string","category":"string"}],'
         '"depends_on":["KB-xxx"],'
-        '"cross_process_dependency":"单流程|跨流程","inferred":true}]}\n'
-        "注意:depends_on 必须引用 knowledge_assets 中已存在的 KB id,列出该流程核心依赖的主要资产。"
+        '"cross_process_dependency":"单流程|跨流程",'
+        '"expected_difficulty":"basic|advanced|expert",'
+        '"inferred":true}]}\n'
+        "注意:depends_on 必须引用 knowledge_assets 中已存在的 KB id,"
+        "expected_difficulty 必须真实反映 steps/outputs/cross 三项构成。"
     )
-    out = client.chat_json(system, user, max_tokens=3000)
-    return out.get("processes", []) if isinstance(out, dict) else []
+    out = client.chat_json(system, user, max_tokens=4000)
+    raw = out.get("processes", []) if isinstance(out, dict) else []
+    return [n for n in (_normalize_process_schema(p) for p in raw) if n]
+
+
+def _llm_extend_processes(
+    client: LLMClient,
+    artifacts: dict[str, Any],
+    existing: list[dict[str, Any]],
+    target_kind: str,
+) -> list[dict[str, Any]]:
+    """补强调用:基于已生成流程,要求 LLM 追加更高/更低复杂度的流程。
+
+    target_kind 为 'expert' 时要求 steps≥6 / outputs≥2 / cross / 含管理层;
+    为 'basic' 时反之。返回新增流程列表(可空)。
+    """
+    system_path = config.REPO_ROOT / "questforge/prompts/stage2_process.txt"
+    system = system_path.read_text(encoding="utf-8")
+    brief_existing = [
+        {
+            "id": p["id"],
+            "name": p.get("name"),
+            "steps_count": len(p.get("steps", [])),
+            "outputs_count": len(p.get("outputs", [])),
+            "cross": p.get("cross_process_dependency"),
+            "expected_difficulty": p.get("expected_difficulty"),
+        }
+        for p in existing
+    ]
+    if target_kind == "expert":
+        spec = (
+            "新增至少 1 条 expert 流程: steps≥6 / outputs≥2 /"
+            " cross_process_dependency=跨流程 / actors 含 level=管理 的角色。"
+        )
+    else:
+        spec = (
+            "新增至少 1 条 basic 流程: steps≤3 / outputs=1 /"
+            " cross_process_dependency=单流程 / actors 仅业务层。"
+        )
+    payload = {
+        "business_goal": artifacts.get("business_goal", {}),
+        "knowledge_assets": [
+            {"id": a["id"], "category": a.get("category"), "authority": a.get("authority")}
+            for a in artifacts.get("knowledge_assets", [])
+        ],
+        "docs_digest": (artifacts.get("docs_digest") or "")[:1800],
+    }
+    user = (
+        "<stage1_artifacts>\n" + json.dumps(payload, ensure_ascii=False) + "\n</stage1_artifacts>\n"
+        "<existing_processes>\n" + json.dumps(brief_existing, ensure_ascii=False) + "\n</existing_processes>\n"
+        f"现有流程在复杂度上有缺口,{spec}\n"
+        "新增流程的 id 不得与 existing 重复;同样按 stage2_process schema 输出 processes 数组。"
+    )
+    out = client.chat_json(system, user, max_tokens=2200)
+    raw = out.get("processes", []) if isinstance(out, dict) else []
+    return [n for n in (_normalize_process_schema(p) for p in raw) if n]
+
+
+def _next_bp_id(taken: set[str]) -> str:
+    n = 1
+    while f"BP-{n:03d}" in taken:
+        n += 1
+    return f"BP-{n:03d}"
+
+
+def _normalize_process_schema(p: dict[str, Any]) -> dict[str, Any] | None:
+    """把 LLM 偶尔返回的字符串/None 归一为 dict 列表;不可修复则返回 None。"""
+    if not isinstance(p, dict) or not p.get("name"):
+        return None
+
+    def _to_dicts(items: Any, default_keys: tuple[str, ...]) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for it in items or []:
+            if isinstance(it, dict):
+                out.append(it)
+            elif isinstance(it, str) and it.strip():
+                # 字符串退化:塞到第一个默认键里
+                out.append({default_keys[0]: it.strip()})
+        return out
+
+    p["triggers"] = _to_dicts(p.get("triggers"), ("type", "description"))
+    p["steps"] = _to_dicts(p.get("steps"), ("name",))
+    p["outputs"] = _to_dicts(p.get("outputs"), ("name", "category"))
+    p["actors"] = _to_dicts(p.get("actors"), ("role",))
+    if not isinstance(p.get("depends_on"), list):
+        p["depends_on"] = []
+    if "cross_process_dependency" not in p:
+        p["cross_process_dependency"] = "单流程"
+    return p
+
+
+def _audit_complexity_gradient(
+    processes: list[dict[str, Any]],
+    artifacts: dict[str, Any],
+    client: LLMClient,
+) -> tuple[list[dict[str, Any]], str]:
+    """检查复杂度梯度;不达标则尝试 1 次 LLM 补强。返回(processes, audit_note)。"""
+    if not processes:
+        return processes, "processes 为空,跳过梯度自检"
+    scores = [_complexity(p) for p in processes]
+    diffs = {_assign_difficulty(s) for s in scores}
+    span = max(scores) - min(scores)
+    has_expert = "expert" in diffs
+
+    if span >= 0.3 and len(diffs) >= 2 and has_expert:
+        return processes, "复杂度梯度自检通过"
+
+    target = "expert" if not has_expert else "basic"
+    log.info("[Stage2] 复杂度梯度不足(span=%.2f, diffs=%s),触发 LLM 补强 → %s", span, diffs, target)
+    extra = _llm_extend_processes(client, artifacts, processes, target)
+    if not extra:
+        return processes, f"梯度不足且 LLM 补强未返回新流程(target={target})"
+
+    existing_ids = {p["id"] for p in processes}
+    merged = list(processes)
+    for p in extra:
+        pid = p.get("id")
+        if not pid or pid in existing_ids or not pid.startswith("BP-"):
+            pid = _next_bp_id(existing_ids)
+        existing_ids.add(pid)
+        p["id"] = pid
+        p["inferred"] = True
+        p.setdefault("expected_difficulty", target)
+        merged.append(p)
+    return merged, f"已通过 LLM 补强追加 {len(extra)} 条 {target} 流程"
+
+
+def _audit_feature_coverage(
+    processes: list[dict[str, Any]],
+    features: list[dict[str, Any]],
+    artifacts: dict[str, Any],
+    client: LLMClient,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """用户提供 business_processes 时校验是否覆盖所有 features。
+
+    任一 feature 名未在任何 BP 名/depends_on 中体现,且 LLM 可用 → 自动补 1 条;
+    不可用 → 返回缺口列表给上层 raise MissingInputError。
+    """
+    if not processes or not features:
+        return processes, []
+
+    proc_text = " ".join(
+        (p.get("name") or "") + " " + " ".join(p.get("depends_on") or []) for p in processes
+    )
+    uncovered = [
+        f for f in features
+        if (f.get("name") or "") and (f.get("name") not in proc_text)
+        and not any(dep in (p.get("depends_on") or []) for p in processes for dep in (f.get("depends_on") or []))
+    ]
+    if not uncovered:
+        return processes, []
+
+    if not client.use_llm:
+        return processes, [f.get("name", "?") for f in uncovered]
+
+    log.info("[Stage2] 用户提供流程未覆盖 %d 个 feature,触发 LLM 补全", len(uncovered))
+    extra = _llm_extend_processes(client, artifacts, processes, target_kind="basic")
+    if not extra:
+        return processes, [f.get("name", "?") for f in uncovered]
+
+    existing_ids = {p["id"] for p in processes}
+    for p in extra:
+        pid = p.get("id")
+        if not pid or pid in existing_ids or not pid.startswith("BP-"):
+            pid = _next_bp_id(existing_ids)
+        existing_ids.add(pid)
+        p["id"] = pid
+        p["inferred"] = True
+        p["audit_supplement"] = True
+        processes.append(p)
+    return processes, []
 
 
 # ========== Step 2.2 · 分类维度提取 ==========
@@ -372,13 +563,40 @@ def run(stage1_md: Path | str, out_dir: Path | None, agent_input: AgentInput) ->
     )
 
     # ===== Step 2.1 流程提取 =====
+    client = get_default_client()
+    audit_notes: list[str] = []
     if agent_input.business_processes:
         processes = _transcribe_user_processes(agent_input.business_processes)
+        # 用户路径补全检测:覆盖度审计
+        processes, uncovered = _audit_feature_coverage(
+            processes, artifacts.get("features", []), artifacts, client
+        )
+        if uncovered:
+            raise MissingInputError(
+                stage="Stage 2 · 业务流程提取",
+                report=[
+                    MissingField(
+                        field_name="business_processes 覆盖度",
+                        why_needed=(
+                            f"用户提供的 business_processes 未覆盖以下 features: {uncovered}; "
+                            "Stage 2 需要每个核心 feature 至少出现在一条 BP 的 name 或 depends_on 中,"
+                            "否则 Stage 3 无法为这些 feature 生成题目"
+                        ),
+                        suggested_format=(
+                            "两种选择:(a) 在 example_input.json 的 business_processes 追加上述 features 的对应流程;"
+                            "(b) 启用 LLM(配置 LLM_API_KEY) 让 Pipeline 自动补全"
+                        ),
+                        example=(
+                            '"business_processes": [..., {"id":"BP-X","name":"<feature 名>",'
+                            '"depends_on":["KB-..."],"steps":[...],...}]'
+                        ),
+                    )
+                ],
+            )
         llm_used = False
         fallback_1 = False
         remarks_extra = "用户已在 AgentInput.business_processes 提供流程,直接转录"
     else:
-        client = get_default_client()
         if not client.use_llm:
             raise MissingInputError(
                 stage="Stage 2 · 业务流程提取",
@@ -410,6 +628,9 @@ def run(stage1_md: Path | str, out_dir: Path | None, agent_input: AgentInput) ->
                     )
                 ],
             )
+        # 复杂度梯度自检 + 必要时 1 次 LLM 补强
+        processes, audit_note = _audit_complexity_gradient(processes, artifacts, client)
+        audit_notes.append(audit_note)
         llm_used = True
         fallback_1 = True
         remarks_extra = "业务流程由 LLM 推导(第一层 Fallback)"
@@ -423,6 +644,7 @@ def run(stage1_md: Path | str, out_dir: Path | None, agent_input: AgentInput) ->
     coverage_matrix = _build_coverage_matrix(test_plan)
 
     remarks: list[str] = [remarks_extra]
+    remarks.extend(audit_notes)
     if len(effective_dims) < 2:
         remarks.append(f"有效分类维度不足({len(effective_dims)}/4),以触发+跨流程组合为聚类主轴")
     if len(test_plan) < 3:
