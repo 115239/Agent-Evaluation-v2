@@ -1,0 +1,566 @@
+{
+  "global": {
+    "count": 4,
+    "test_ids": [
+      "TEST-001",
+      "TEST-002",
+      "TEST-003",
+      "TEST-004"
+    ],
+    "passed_rate": 0.75,
+    "difficulty_distribution": {
+      "basic": 1,
+      "advanced": 2,
+      "expert": 1
+    },
+    "difficulty_score": {
+      "count": 4,
+      "mean": 2.08,
+      "median": 2.17,
+      "min": 1.67,
+      "max": 2.33,
+      "p25": 2.04,
+      "p75": 2.21,
+      "p90": 2.28,
+      "stdev": 0.29
+    },
+    "constraint_count": {
+      "count": 4,
+      "mean": 2.75,
+      "median": 3.0,
+      "min": 2.0,
+      "max": 3.0,
+      "p25": 2.75,
+      "p75": 3.0,
+      "p90": 3.0,
+      "stdev": 0.5
+    },
+    "interference_count": {
+      "count": 4,
+      "mean": 1.0,
+      "median": 1.0,
+      "min": 0.0,
+      "max": 2.0,
+      "p25": 0.75,
+      "p75": 1.25,
+      "p90": 1.7,
+      "stdev": 0.82
+    },
+    "est_D": {
+      "count": 4,
+      "mean": 0.55,
+      "median": 0.58,
+      "min": 0.23,
+      "max": 0.82,
+      "p25": 0.49,
+      "p75": 0.64,
+      "p90": 0.75,
+      "stdev": 0.24
+    }
+  },
+  "by_difficulty": {
+    "advanced": {
+      "count": 2,
+      "test_ids": [
+        "TEST-002",
+        "TEST-003"
+      ],
+      "passed_rate": 1.0,
+      "difficulty_distribution": {
+        "advanced": 2
+      },
+      "difficulty_score": {
+        "count": 2,
+        "mean": 2.17,
+        "median": 2.17,
+        "min": 2.17,
+        "max": 2.17,
+        "p25": 2.17,
+        "p75": 2.17,
+        "p90": 2.17,
+        "stdev": 0.0
+      },
+      "constraint_count": {
+        "count": 2,
+        "mean": 3.0,
+        "median": 3.0,
+        "min": 3.0,
+        "max": 3.0,
+        "p25": 3.0,
+        "p75": 3.0,
+        "p90": 3.0,
+        "stdev": 0.0
+      },
+      "interference_count": {
+        "count": 2,
+        "mean": 1.0,
+        "median": 1.0,
+        "min": 1.0,
+        "max": 1.0,
+        "p25": 1.0,
+        "p75": 1.0,
+        "p90": 1.0,
+        "stdev": 0.0
+      },
+      "est_D": {
+        "count": 2,
+        "mean": 0.58,
+        "median": 0.58,
+        "min": 0.58,
+        "max": 0.58,
+        "p25": 0.58,
+        "p75": 0.58,
+        "p90": 0.58,
+        "stdev": 0.0
+      }
+    },
+    "basic": {
+      "count": 1,
+      "test_ids": [
+        "TEST-001"
+      ],
+      "passed_rate": 0.0,
+      "difficulty_distribution": {
+        "basic": 1
+      },
+      "difficulty_score": {
+        "count": 1,
+        "mean": 1.67,
+        "median": 1.67,
+        "min": 1.67,
+        "max": 1.67,
+        "p25": 1.67,
+        "p75": 1.67,
+        "p90": 1.67,
+        "stdev": 0.0
+      },
+      "constraint_count": {
+        "count": 1,
+        "mean": 2.0,
+        "median": 2.0,
+        "min": 2.0,
+        "max": 2.0,
+        "p25": 2.0,
+        "p75": 2.0,
+        "p90": 2.0,
+        "stdev": 0.0
+      },
+      "interference_count": {
+        "count": 1,
+        "mean": 0.0,
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "p25": 0.0,
+        "p75": 0.0,
+        "p90": 0.0,
+        "stdev": 0.0
+      },
+      "est_D": {
+        "count": 1,
+        "mean": 0.23,
+        "median": 0.23,
+        "min": 0.23,
+        "max": 0.23,
+        "p25": 0.23,
+        "p75": 0.23,
+        "p90": 0.23,
+        "stdev": 0.0
+      }
+    },
+    "expert": {
+      "count": 1,
+      "test_ids": [
+        "TEST-004"
+      ],
+      "passed_rate": 1.0,
+      "difficulty_distribution": {
+        "expert": 1
+      },
+      "difficulty_score": {
+        "count": 1,
+        "mean": 2.33,
+        "median": 2.33,
+        "min": 2.33,
+        "max": 2.33,
+        "p25": 2.33,
+        "p75": 2.33,
+        "p90": 2.33,
+        "stdev": 0.0
+      },
+      "constraint_count": {
+        "count": 1,
+        "mean": 3.0,
+        "median": 3.0,
+        "min": 3.0,
+        "max": 3.0,
+        "p25": 3.0,
+        "p75": 3.0,
+        "p90": 3.0,
+        "stdev": 0.0
+      },
+      "interference_count": {
+        "count": 1,
+        "mean": 2.0,
+        "median": 2.0,
+        "min": 2.0,
+        "max": 2.0,
+        "p25": 2.0,
+        "p75": 2.0,
+        "p90": 2.0,
+        "stdev": 0.0
+      },
+      "est_D": {
+        "count": 1,
+        "mean": 0.82,
+        "median": 0.82,
+        "min": 0.82,
+        "max": 0.82,
+        "p25": 0.82,
+        "p75": 0.82,
+        "p90": 0.82,
+        "stdev": 0.0
+      }
+    }
+  },
+  "by_user_group": {
+    "UG-001": {
+      "count": 4,
+      "test_ids": [
+        "TEST-001",
+        "TEST-002",
+        "TEST-003",
+        "TEST-004"
+      ],
+      "passed_rate": 0.75,
+      "difficulty_distribution": {
+        "basic": 1,
+        "advanced": 2,
+        "expert": 1
+      },
+      "difficulty_score": {
+        "count": 4,
+        "mean": 2.08,
+        "median": 2.17,
+        "min": 1.67,
+        "max": 2.33,
+        "p25": 2.04,
+        "p75": 2.21,
+        "p90": 2.28,
+        "stdev": 0.29
+      },
+      "constraint_count": {
+        "count": 4,
+        "mean": 2.75,
+        "median": 3.0,
+        "min": 2.0,
+        "max": 3.0,
+        "p25": 2.75,
+        "p75": 3.0,
+        "p90": 3.0,
+        "stdev": 0.5
+      },
+      "interference_count": {
+        "count": 4,
+        "mean": 1.0,
+        "median": 1.0,
+        "min": 0.0,
+        "max": 2.0,
+        "p25": 0.75,
+        "p75": 1.25,
+        "p90": 1.7,
+        "stdev": 0.82
+      },
+      "est_D": {
+        "count": 4,
+        "mean": 0.55,
+        "median": 0.58,
+        "min": 0.23,
+        "max": 0.82,
+        "p25": 0.49,
+        "p75": 0.64,
+        "p90": 0.75,
+        "stdev": 0.24
+      }
+    }
+  },
+  "by_source_process": {
+    "BP-001": {
+      "count": 1,
+      "test_ids": [
+        "TEST-001"
+      ],
+      "passed_rate": 0.0,
+      "difficulty_distribution": {
+        "basic": 1
+      },
+      "difficulty_score": {
+        "count": 1,
+        "mean": 1.67,
+        "median": 1.67,
+        "min": 1.67,
+        "max": 1.67,
+        "p25": 1.67,
+        "p75": 1.67,
+        "p90": 1.67,
+        "stdev": 0.0
+      },
+      "constraint_count": {
+        "count": 1,
+        "mean": 2.0,
+        "median": 2.0,
+        "min": 2.0,
+        "max": 2.0,
+        "p25": 2.0,
+        "p75": 2.0,
+        "p90": 2.0,
+        "stdev": 0.0
+      },
+      "interference_count": {
+        "count": 1,
+        "mean": 0.0,
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "p25": 0.0,
+        "p75": 0.0,
+        "p90": 0.0,
+        "stdev": 0.0
+      },
+      "est_D": {
+        "count": 1,
+        "mean": 0.23,
+        "median": 0.23,
+        "min": 0.23,
+        "max": 0.23,
+        "p25": 0.23,
+        "p75": 0.23,
+        "p90": 0.23,
+        "stdev": 0.0
+      }
+    },
+    "BP-002": {
+      "count": 1,
+      "test_ids": [
+        "TEST-002"
+      ],
+      "passed_rate": 1.0,
+      "difficulty_distribution": {
+        "advanced": 1
+      },
+      "difficulty_score": {
+        "count": 1,
+        "mean": 2.17,
+        "median": 2.17,
+        "min": 2.17,
+        "max": 2.17,
+        "p25": 2.17,
+        "p75": 2.17,
+        "p90": 2.17,
+        "stdev": 0.0
+      },
+      "constraint_count": {
+        "count": 1,
+        "mean": 3.0,
+        "median": 3.0,
+        "min": 3.0,
+        "max": 3.0,
+        "p25": 3.0,
+        "p75": 3.0,
+        "p90": 3.0,
+        "stdev": 0.0
+      },
+      "interference_count": {
+        "count": 1,
+        "mean": 1.0,
+        "median": 1.0,
+        "min": 1.0,
+        "max": 1.0,
+        "p25": 1.0,
+        "p75": 1.0,
+        "p90": 1.0,
+        "stdev": 0.0
+      },
+      "est_D": {
+        "count": 1,
+        "mean": 0.58,
+        "median": 0.58,
+        "min": 0.58,
+        "max": 0.58,
+        "p25": 0.58,
+        "p75": 0.58,
+        "p90": 0.58,
+        "stdev": 0.0
+      }
+    },
+    "BP-003": {
+      "count": 1,
+      "test_ids": [
+        "TEST-003"
+      ],
+      "passed_rate": 1.0,
+      "difficulty_distribution": {
+        "advanced": 1
+      },
+      "difficulty_score": {
+        "count": 1,
+        "mean": 2.17,
+        "median": 2.17,
+        "min": 2.17,
+        "max": 2.17,
+        "p25": 2.17,
+        "p75": 2.17,
+        "p90": 2.17,
+        "stdev": 0.0
+      },
+      "constraint_count": {
+        "count": 1,
+        "mean": 3.0,
+        "median": 3.0,
+        "min": 3.0,
+        "max": 3.0,
+        "p25": 3.0,
+        "p75": 3.0,
+        "p90": 3.0,
+        "stdev": 0.0
+      },
+      "interference_count": {
+        "count": 1,
+        "mean": 1.0,
+        "median": 1.0,
+        "min": 1.0,
+        "max": 1.0,
+        "p25": 1.0,
+        "p75": 1.0,
+        "p90": 1.0,
+        "stdev": 0.0
+      },
+      "est_D": {
+        "count": 1,
+        "mean": 0.58,
+        "median": 0.58,
+        "min": 0.58,
+        "max": 0.58,
+        "p25": 0.58,
+        "p75": 0.58,
+        "p90": 0.58,
+        "stdev": 0.0
+      }
+    },
+    "BP-004": {
+      "count": 1,
+      "test_ids": [
+        "TEST-004"
+      ],
+      "passed_rate": 1.0,
+      "difficulty_distribution": {
+        "expert": 1
+      },
+      "difficulty_score": {
+        "count": 1,
+        "mean": 2.33,
+        "median": 2.33,
+        "min": 2.33,
+        "max": 2.33,
+        "p25": 2.33,
+        "p75": 2.33,
+        "p90": 2.33,
+        "stdev": 0.0
+      },
+      "constraint_count": {
+        "count": 1,
+        "mean": 3.0,
+        "median": 3.0,
+        "min": 3.0,
+        "max": 3.0,
+        "p25": 3.0,
+        "p75": 3.0,
+        "p90": 3.0,
+        "stdev": 0.0
+      },
+      "interference_count": {
+        "count": 1,
+        "mean": 2.0,
+        "median": 2.0,
+        "min": 2.0,
+        "max": 2.0,
+        "p25": 2.0,
+        "p75": 2.0,
+        "p90": 2.0,
+        "stdev": 0.0
+      },
+      "est_D": {
+        "count": 1,
+        "mean": 0.82,
+        "median": 0.82,
+        "min": 0.82,
+        "max": 0.82,
+        "p25": 0.82,
+        "p75": 0.82,
+        "p90": 0.82,
+        "stdev": 0.0
+      }
+    }
+  },
+  "by_primary_asset": {
+    "KB-001": {
+      "count": 4,
+      "test_ids": [
+        "TEST-001",
+        "TEST-002",
+        "TEST-003",
+        "TEST-004"
+      ],
+      "passed_rate": 0.75,
+      "difficulty_distribution": {
+        "basic": 1,
+        "advanced": 2,
+        "expert": 1
+      },
+      "difficulty_score": {
+        "count": 4,
+        "mean": 2.08,
+        "median": 2.17,
+        "min": 1.67,
+        "max": 2.33,
+        "p25": 2.04,
+        "p75": 2.21,
+        "p90": 2.28,
+        "stdev": 0.29
+      },
+      "constraint_count": {
+        "count": 4,
+        "mean": 2.75,
+        "median": 3.0,
+        "min": 2.0,
+        "max": 3.0,
+        "p25": 2.75,
+        "p75": 3.0,
+        "p90": 3.0,
+        "stdev": 0.5
+      },
+      "interference_count": {
+        "count": 4,
+        "mean": 1.0,
+        "median": 1.0,
+        "min": 0.0,
+        "max": 2.0,
+        "p25": 0.75,
+        "p75": 1.25,
+        "p90": 1.7,
+        "stdev": 0.82
+      },
+      "est_D": {
+        "count": 4,
+        "mean": 0.55,
+        "median": 0.58,
+        "min": 0.23,
+        "max": 0.82,
+        "p25": 0.49,
+        "p75": 0.64,
+        "p90": 0.75,
+        "stdev": 0.24
+      }
+    }
+  }
+}

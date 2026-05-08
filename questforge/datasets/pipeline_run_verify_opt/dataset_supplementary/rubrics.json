@@ -1,0 +1,594 @@
+{
+  "TEST-001": {
+    "total_max_score": 10,
+    "stages": [
+      {
+        "stage_name": "定义问题",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "准确识别用户核心诉求为‘依据最新权威条款对两个具体行为进行党纪类型定性’，而非泛泛了解纪律分类或处分后果",
+            "score": 1.0,
+            "evidence_type": "llm_judge",
+            "keywords": []
+          },
+          {
+            "description": "识别隐含需求：输出结果须满足初核笔录直接引用要求，即含原文片段+来源标注+结构化归类",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "初核笔录",
+              "来源文档",
+              "片段内容",
+              "结构化条款"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "拆解问题",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "正确拆解为三步：输入行为描述 → 检索 KB-001 匹配条款 → 返回含原文、来源、强度的结构化结果",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "纪检监察员在系统中输入违纪行为描述性查询",
+              "系统基于语义匹配从 KB-001 检索最相关党纪条款，提取要点词、违纪行为、序号及置信度",
+              "返回结构化结果：含原文片段、来源行号、依据强度标注，供初核笔录引用"
+            ]
+          },
+          {
+            "description": "明确步骤不可逆序或省略，尤其强调‘标注来源’是第三步的刚性组成，非可选补充",
+            "score": 1.0,
+            "evidence_type": "semantic_match",
+            "keywords": [
+              "必须标注所引条款的具体来源文档及片段内容"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "方案生成",
+        "max_score": 3,
+        "weight": 0.3,
+        "scoring_points": [
+          {
+            "description": "优先调用 FRAG-001-0418 定性‘收受礼品’为违反廉洁纪律，因该片段明确包含‘接受可能影响公正执行公务的礼金、礼品……’",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "违反廉洁纪律",
+              "接受可能影响公正执行公务的礼金、礼品、宴请"
+            ]
+          },
+          {
+            "description": "同步调用 FRAG-001-0109 定性‘办公用房超标’为违反工作纪律，因该片段明确列出‘违反办公用房管理规定’",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "违反工作纪律",
+              "违反办公用房管理规定"
+            ]
+          },
+          {
+            "description": "拒绝将‘办公用房超标’错误归入廉洁纪律或生活纪律，体现条款边界意识",
+            "score": 1.0,
+            "evidence_type": "llm_judge",
+            "keywords": []
+          }
+        ]
+      },
+      {
+        "stage_name": "执行落地",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "输出格式严格为结构化字段：违纪类型｜原文片段｜来源（KB-001 / FRAG-xxx）｜依据强度",
+            "score": 1.0,
+            "evidence_type": "semantic_match",
+            "keywords": [
+              "结构化条款",
+              "原文片段",
+              "KB-001"
+            ]
+          },
+          {
+            "description": "未出现‘参考’‘建议’‘一般认为’等模糊表述，所有定性均以‘属于’‘构成’等确定性动词呈现",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "属于",
+              "构成",
+              "违反"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "元认知",
+        "max_score": 1,
+        "weight": 0.1,
+        "scoring_points": [
+          {
+            "description": "在输出中显式标注‘依据 KB-001 最新权威条目’并列明 FRAG-ID，体现来源可追溯性",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "KB-001",
+              "FRAG-001-0418",
+              "FRAG-001-0109",
+              "最新权威条目"
+            ]
+          }
+        ]
+      }
+    ],
+    "fatal_deductions": [
+      {
+        "description": "未引用 KB-001 任一片段，或仅泛引‘党纪处分条例’等上位法而未落脚到结构化条款资产",
+        "detection_rule": "输出中完全缺失 KB-001 或 FRAG-xxx 字样，或仅出现‘《中国共产党纪律处分条例》’等未关联 KB-ID 的表述"
+      }
+    ],
+    "veto_items": [
+      {
+        "description": "将‘收受礼品’定性为违反政治纪律或生活纪律，或未区分‘办公用房超标’与‘违规接受宴请’的纪律类型归属",
+        "detection_rule": "出现‘违反政治纪律’与‘收受礼品’直接绑定，或‘违反生活纪律’与‘办公用房超标’直接绑定"
+      }
+    ]
+  },
+  "TEST-002": {
+    "total_max_score": 10,
+    "stages": [
+      {
+        "stage_name": "定义问题",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "准确识别核心诉求为生成具备双源支撑、可直接用于文书的定性量纪建议，而非单纯解释八项规定含义",
+            "score": 1.0,
+            "evidence_type": "llm_judge",
+            "keywords": []
+          },
+          {
+            "description": "显性指出用户隐含需求：纠偏基层‘可免予处分’误读，确立‘越往后越严’权威口径",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "越往后越严",
+              "违反中央八项规定精神"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "拆解问题",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "完整复现 source_process.steps 的三个 name 字符串，顺序与文字完全一致，无合并、缩写或替换",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "纪检监察员录入违纪事实（如'接受管理服务对象宴请并收受礼金'）",
+              "系统并行调用 KB-001（党纪条款）与 KB-002（实务问答）进行双源校验：匹配条款+验证同类案例处理口径",
+              "融合输出建议定性（如'违反廉洁纪律'）、对应 KB-001 序号、量纪梯度（警告至开除党籍）、从宽/从严情节提示"
+            ]
+          },
+          {
+            "description": "明确指出第二步‘双源校验’是承上启下的关键节点，且 KB-002 必须聚焦指导性案例而非一般问答",
+            "score": 1.0,
+            "evidence_type": "semantic_match",
+            "keywords": [
+              "双源校验",
+              "指导性案例"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "方案生成",
+        "max_score": 3,
+        "weight": 0.3,
+        "scoring_points": [
+          {
+            "description": "定性结论准确使用‘违反廉洁纪律’标准表述，且与《中国共产党纪律处分条例》第八章逻辑自洽",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "违反廉洁纪律",
+              "中国共产党纪律处分条例",
+              "第八章"
+            ]
+          },
+          {
+            "description": "量纪梯度完整覆盖‘警告至开除党籍’五档，并关联 KB-002 指导性案例中‘处理处分不精准不恰当’警示",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "警告至开除党籍",
+              "处理处分不精准不恰当"
+            ]
+          },
+          {
+            "description": "明确否定‘首次轻微可免予处分’说法，并援引 KB-002 ‘越往后越严’信号作为权威依据",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "越往后越严",
+              "可免予处分"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "执行落地",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "输出格式严格符合‘定性量纪建议书’结构，包含【定性结论】【对应条款】【量纪梯度】【情节提示】【参照依据】五大字段",
+            "score": 1.0,
+            "evidence_type": "semantic_match",
+            "keywords": [
+              "定性量纪建议书",
+              "【定性结论】",
+              "【对应条款】"
+            ]
+          },
+          {
+            "description": "每条依据均标注至‘文档标题+片段编号’层级（如‘20210804 中央纪委国家监委发布第一批执纪执法指导性案例-中央纪委网站.docx | 片段1’），无遗漏或模糊表述",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "20210804 中央纪委国家监委发布第一批执纪执法指导性案例-中央纪委网站.docx",
+              "片段1"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "元认知",
+        "max_score": 1,
+        "weight": 0.1,
+        "scoring_points": [
+          {
+            "description": "在建议末尾主动声明权限边界：仅适用于党纪处分环节，不替代监察调查程序；对涉嫌职务违法/犯罪的须移送审理室",
+            "score": 1.0,
+            "evidence_type": "semantic_match",
+            "keywords": [
+              "党纪处分",
+              "监察调查",
+              "移送审理室"
+            ]
+          }
+        ]
+      }
+    ],
+    "fatal_deductions": [
+      {
+        "description": "未提及或错误表述‘越往后越严’这一指导性案例核心信号，导致建议弱化政治要求",
+        "detection_rule": "缺失关键词‘越往后越严’或出现‘可酌情从轻’‘首次可教育为主’等与之矛盾的表述"
+      }
+    ],
+    "veto_items": [
+      {
+        "description": "未标注任何 KB-002 指导性案例出处（文档名+片段编号），或仅笼统写‘据中央纪委网站’",
+        "detection_rule": "输出中不存在形如‘20210804 中央纪委国家监委发布第一批执纪执法指导性案例-中央纪委网站.docx | 片段X’的完整标注"
+      }
+    ]
+  },
+  "TEST-003": {
+    "total_max_score": 10,
+    "stages": [
+      {
+        "stage_name": "定义问题",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "准确识别用户核心诉求是终审谈话方案中‘邮寄送达外国公民’表述的合规性，而非泛泛了解送达方式",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "谈话方案",
+              "邮寄送达外国公民",
+              "合规性终审"
+            ]
+          },
+          {
+            "description": "识别出隐含需求是输出结构化纠错反馈单，且需满足多源依据闭环与出处标注",
+            "score": 1.0,
+            "evidence_type": "semantic_match",
+            "keywords": [
+              "纠错反馈单",
+              "标注出处",
+              "多源依据"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "拆解问题",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "完整复现BP-003三步流程：上传→识别→生成带链接纠错清单，顺序与文字完全一致",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "纪检监察员上传待审文书文本（如'报批表(谈话方案及安全预案)'）",
+              "系统识别错误类型（表达歧义/依据缺失/口径偏差/格式不规范），定位 KB-001 或 KB-002 中对应支撑条目",
+              "生成带超链接的纠错清单，标注每处问题所援引的知识源（KB-001 序号或 KB-002 来源片段）"
+            ]
+          },
+          {
+            "description": "明确第二步中‘定位KB-001或KB-002’须区分适用性：KB-001管格式，KB-002仅限谈话主体等非格式事项",
+            "score": 1.0,
+            "evidence_type": "llm_judge",
+            "keywords": []
+          }
+        ]
+      },
+      {
+        "stage_name": "方案生成",
+        "max_score": 3,
+        "weight": 0.3,
+        "scoring_points": [
+          {
+            "description": "正确援引KB-001/FRAG-001-3336中‘邮寄送达’‘违反送达程序’‘司法文书格式不规范’作为核心依据",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "邮寄送达",
+              "违反送达程序",
+              "司法文书格式不规范"
+            ]
+          },
+          {
+            "description": "明确排除KB-002中全部保障类问答（后勤/措施/取证/任务分工），并说明排除理由为‘与文书格式纠错无关’",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "后勤保障",
+              "措施保障",
+              "取证保障",
+              "与文书格式纠错无关"
+            ]
+          },
+          {
+            "description": "所有依据均标注原始文档名（如《制定审查调查方案应注意哪些问题.docx》）及片段位置（如‘片段5’），未使用KB-002代号替代",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "《制定审查调查方案应注意哪些问题.docx》",
+              "片段5"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "执行落地",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "输出格式严格符合‘文书纠错反馈单’结构：含错误定位、类型、修正建议、依据来源四要素",
+            "score": 1.0,
+            "evidence_type": "semantic_match",
+            "keywords": [
+              "错误定位",
+              "错误类型",
+              "修正建议",
+              "依据来源"
+            ]
+          },
+          {
+            "description": "修正建议具可操作性（如‘删除该表述’或‘替换为留置送达/委托外交途径’），非模糊表述（如‘注意规范’）",
+            "score": 1.0,
+            "evidence_type": "llm_judge",
+            "keywords": []
+          }
+        ]
+      },
+      {
+        "stage_name": "元认知",
+        "max_score": 1,
+        "weight": 0.1,
+        "scoring_points": [
+          {
+            "description": "主动声明KB-002中无送达程序相关内容，因此不构成对KB-001条款的否定，体现依据边界意识",
+            "score": 1.0,
+            "evidence_type": "llm_judge",
+            "keywords": []
+          }
+        ]
+      }
+    ],
+    "fatal_deductions": [
+      {
+        "description": "未标注任何文档名及片段位置（如未出现《制定审查调查方案应注意哪些问题.docx》或‘片段5’字样）",
+        "detection_rule": "输出中完全缺失原始文档名或片段标识"
+      }
+    ],
+    "veto_items": [
+      {
+        "description": "将KB-002中‘后勤保障’‘措施保障’等内容作为送达格式依据引用",
+        "detection_rule": "输出中出现‘后勤保障’‘措施保障’‘取证保障’任一词与‘送达’‘格式’‘程序’等词共现"
+      }
+    ]
+  },
+  "TEST-004": {
+    "total_max_score": 10,
+    "stages": [
+      {
+        "stage_name": "定义问题",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "准确识别用户角色为内蒙古自治区纪委监委纪检监察员，且任务目标是向上级汇报‘政治监督具体化常态化’政策依据链",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "内蒙古自治区纪委监委",
+              "政治监督具体化常态化",
+              "分管副书记汇报"
+            ]
+          },
+          {
+            "description": "识别出隐性需求：三维依据包必须含讲话原文、理论摘要、党纪条款，且每项需标注来源资产类别与片段摘要",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "总书记讲话",
+              "理论文章",
+              "党纪条款",
+              "标注来源资产类别",
+              "对应片段摘要"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "拆解问题",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "完整列出BP-004全部6个步骤名称，顺序与文字与source_process.steps完全一致",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "纪检监察员输入政策命题（如'政治监督具体化常态化'）",
+              "系统同步检索 KB-003（总书记讲话上下文）、KB-004（理论文章摘要）、KB-001（党纪条款），提取主题标签、核心论点、对应条款",
+              "交叉比对三源一致性：识别讲话精神→理论阐释→纪法落点映射链",
+              "生成政策依据整合包：含讲话原文片段（KB-003）、理论支撑摘要（KB-004）、适用党纪条款（KB-001）",
+              "纪检监察员选择是否触发管理层复核：若用于重大案件汇报，则自动推送至分管副书记",
+              "分管副书记在系统中确认三源逻辑闭环性，签署‘政策依据完备’意见并归档"
+            ]
+          },
+          {
+            "description": "明确第5步为本题强制触发项（因用于重大案件汇报），并在后续方案中体现推送动作",
+            "score": 1.0,
+            "evidence_type": "semantic_match",
+            "keywords": [
+              "强制触发",
+              "重大案件汇报",
+              "推送至分管副书记"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "方案生成",
+        "max_score": 3,
+        "weight": 0.3,
+        "scoring_points": [
+          {
+            "description": "正确选取KB-003中2023年及以后发布的全会讲话（FRAG-003-0652/FRAG-003-0654），排除2023年前旧文",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "二十届中央纪委二次全会",
+              "二十届中央纪委四次全会",
+              "2023-01-09",
+              "2025-01-06"
+            ]
+          },
+          {
+            "description": "正确选取KB-004中关于‘政治监督具体化常态化’的理论阐释（FRAG-004-4861）及地方实践佐证（FRAG-004-2161），并区分其适用语境",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "政治监督具体化常态化",
+              "全国巡视工作会议部署要求",
+              "内蒙古自治区纪委监委将党中央决策部署落实情况作为监督重点"
+            ]
+          },
+          {
+            "description": "明确援引KB-001中2023年修订版《中国共产党纪律处分条例》第六章政治纪律条款，且条款内容与‘落实党中央决策部署打折扣、搞变通’直接对应",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "2023年修订版",
+              "中国共产党纪律处分条例",
+              "第六章",
+              "政治纪律",
+              "落实党中央决策部署打折扣、搞变通"
+            ]
+          }
+        ]
+      },
+      {
+        "stage_name": "执行落地",
+        "max_score": 2,
+        "weight": 0.2,
+        "scoring_points": [
+          {
+            "description": "输出格式严格符合reference.execution.output_format要求：JSON结构含speech_evidence/theoretical_support/disciplinary_clause三字段，每字段含asset_id/frag_id/snippet/summary四子字段",
+            "score": 1.0,
+            "evidence_type": "semantic_match",
+            "keywords": [
+              "JSON结构",
+              "speech_evidence",
+              "theoretical_support",
+              "disciplinary_clause",
+              "asset_id",
+              "frag_id",
+              "snippet",
+              "summary"
+            ]
+          },
+          {
+            "description": "对FRAG-004-2161的适用边界作出说明（地方实践不能直接等同中央全会原则），体现风险预判",
+            "score": 1.0,
+            "evidence_type": "llm_judge",
+            "keywords": []
+          }
+        ]
+      },
+      {
+        "stage_name": "元认知",
+        "max_score": 1,
+        "weight": 0.1,
+        "scoring_points": [
+          {
+            "description": "明确声明本输出仅为政策依据整合包，不替代定性量纪结论，并提示最终处分须结合事实与情节另行研判",
+            "score": 1.0,
+            "evidence_type": "keyword_match",
+            "keywords": [
+              "不替代定性量纪结论",
+              "最终处分档次须结合具体违纪事实",
+              "从宽从严情节",
+              "审查调查程序"
+            ]
+          }
+        ]
+      }
+    ],
+    "fatal_deductions": [
+      {
+        "description": "未引用2023年后修订的党纪条款，或错误援引2023年前旧条文",
+        "detection_rule": "输出中出现‘2018年条例’‘2015年条例’或未注明‘2023年修订版’字样"
+      },
+      {
+        "description": "未标注任一依据的KB编号与FRAG编号，或仅写‘见相关文件’‘据权威资料’等模糊表述",
+        "detection_rule": "任一证据字段缺失asset_id或frag_id字段，或keywords中不含KB-xxx/FRAG-xxx格式字符串"
+      }
+    ],
+    "veto_items": [
+      {
+        "description": "将FRAG-004-2161中内蒙古实践表述直接当作中央全会通用原则使用，未作语境限定",
+        "detection_rule": "在theoretical_support或cross_doc_integration中出现‘该表述适用于所有中央纪委全会语境’或类似绝对化断言"
+      }
+    ]
+  }
+}

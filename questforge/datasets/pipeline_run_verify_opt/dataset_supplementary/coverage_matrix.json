@@ -1,0 +1,163 @@
+{
+  "blueprint": {
+    "TEST-001": {
+      "定义问题": "重点",
+      "拆解问题": "常规",
+      "方案生成": "常规",
+      "执行落地": "常规",
+      "元认知": "常规"
+    },
+    "TEST-002": {
+      "定义问题": "常规",
+      "拆解问题": "重点",
+      "方案生成": "重点",
+      "执行落地": "常规",
+      "元认知": "常规"
+    },
+    "TEST-003": {
+      "定义问题": "重点",
+      "拆解问题": "常规",
+      "方案生成": "重点",
+      "执行落地": "常规",
+      "元认知": "常规"
+    },
+    "TEST-004": {
+      "定义问题": "重点",
+      "拆解问题": "重点",
+      "方案生成": "重点",
+      "执行落地": "重点",
+      "元认知": "重点"
+    }
+  },
+  "actual": {
+    "TEST-001": {
+      "定义问题": {
+        "blueprint": "重点",
+        "covered": true,
+        "rich": true,
+        "points": 3
+      },
+      "拆解问题": {
+        "blueprint": "常规",
+        "covered": true,
+        "rich": true,
+        "points": 4
+      },
+      "方案生成": {
+        "blueprint": "常规",
+        "covered": true,
+        "rich": true,
+        "points": 3
+      },
+      "执行落地": {
+        "blueprint": "常规",
+        "covered": true,
+        "rich": true,
+        "points": 2
+      },
+      "元认知": {
+        "blueprint": "常规",
+        "covered": true,
+        "rich": true,
+        "points": 3
+      }
+    },
+    "TEST-002": {
+      "定义问题": {
+        "blueprint": "常规",
+        "covered": true,
+        "rich": true,
+        "points": 3
+      },
+      "拆解问题": {
+        "blueprint": "重点",
+        "covered": true,
+        "rich": true,
+        "points": 4
+      },
+      "方案生成": {
+        "blueprint": "重点",
+        "covered": true,
+        "rich": true,
+        "points": 6
+      },
+      "执行落地": {
+        "blueprint": "常规",
+        "covered": true,
+        "rich": true,
+        "points": 2
+      },
+      "元认知": {
+        "blueprint": "常规",
+        "covered": true,
+        "rich": true,
+        "points": 3
+      }
+    },
+    "TEST-003": {
+      "定义问题": {
+        "blueprint": "重点",
+        "covered": true,
+        "rich": true,
+        "points": 3
+      },
+      "拆解问题": {
+        "blueprint": "常规",
+        "covered": true,
+        "rich": true,
+        "points": 4
+      },
+      "方案生成": {
+        "blueprint": "重点",
+        "covered": true,
+        "rich": true,
+        "points": 7
+      },
+      "执行落地": {
+        "blueprint": "常规",
+        "covered": true,
+        "rich": true,
+        "points": 2
+      },
+      "元认知": {
+        "blueprint": "常规",
+        "covered": true,
+        "rich": true,
+        "points": 3
+      }
+    },
+    "TEST-004": {
+      "定义问题": {
+        "blueprint": "重点",
+        "covered": true,
+        "rich": true,
+        "points": 4
+      },
+      "拆解问题": {
+        "blueprint": "重点",
+        "covered": true,
+        "rich": true,
+        "points": 7
+      },
+      "方案生成": {
+        "blueprint": "重点",
+        "covered": true,
+        "rich": true,
+        "points": 6
+      },
+      "执行落地": {
+        "blueprint": "重点",
+        "covered": true,
+        "rich": true,
+        "points": 2
+      },
+      "元认知": {
+        "blueprint": "重点",
+        "covered": true,
+        "rich": true,
+        "points": 3
+      }
+    }
+  },
+  "coverage_gaps": []
+}

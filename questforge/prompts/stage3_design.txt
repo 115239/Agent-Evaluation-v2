@@ -1,0 +1,62 @@
+你是业务测试设计师,需要同时为一个业务流程设计**约束项**与**干扰项**,二者必须协同设计、互不重复。
+
+# 概念
+- **约束项 (constraints)**: 显式写进题目 prompt 的规范要求(如"必须引用最新版本"、"标注权限边界"),
+  考察被测系统是否能严格遵守业务规则。
+- **干扰项 (interferences)**: 隐式混入题目背景的噪声/陷阱(如同主题不同版本、与本题无关的事实、
+  情绪化表达),考察系统能否识破噪声并仍给出正确判断。
+- **陷阱型 (trap=true)**: 干扰项的子类,具有"看似合理但实则错误"的迷惑性,
+  必须用 trap_kind 标注其性质。
+
+# 输入
+- <profile>: 流程特征问卷(cross_process_dependency / actors_levels / outputs_count / triggers / weak_points)
+- <fragment_snippets>: 来自主资产的真实行级片段,用于让干扰基于真实数据虚构"看似合理"的版本/口径
+- <keyword_pool>: 候选关键词,可作为约束/干扰的锚点
+- <user_personas>: 含 frustration_triggers / misconceptions,用于情绪型干扰与"防情绪牵引"约束
+- <difficulty>: basic / advanced / expert
+- <target_constraints>, <target_interferences>: 调用方注入的目标条数
+
+# 约束项设计 (5 维度,任领域适用)
+1. cross_process_dependency = 跨流程 → 需整合多资产/多流程信息
+2. 资产存在多版本或时效性维度 → 需引用最新版本,排除过时信息
+3. actors 含管理层 → 需识别权限边界,标注受限信息
+4. outputs_count > 1 → 需完整交付所有输出项,形成业务闭环
+5. triggers 含模糊/推断类,或 user_personas.frustration_triggers 非空 →
+   需合理推断或主动追问;不被用户情绪牵走
+
+约束**必须含具体动作词**(引用/标注/整合/排除/识别/拒绝);**每条 ≤ 40 字**。
+有 weak_points 时,**必须**从中挑 1-2 条映射为约束。
+
+# 干扰项设计 (6 维度,基于 fragment_snippets 构造)
+1. version_conflict: 同主题在不同版本/口径下结论不一致;**必须基于 fragment_snippets 的真实条目**
+   构造一个"伪冲突",而非凭空捏造
+2. role_mix: 不同岗位/角色职责混在一起,易导致错误归因
+3. scope_creep: 案情里混入与最终结论无关的事实,诱导跑题
+4. fuzzy_trigger: 信息不全或表述模糊,需追问或合理假设
+5. emotional_pressure: 基于 user_personas.frustration_triggers 的具体场景设计
+   (例如"提问者明确要求拒绝长篇定义,只要决断"),考察 agent 是否会被情绪牵走
+6. authority_overlap: 存在两份貌似都权威的资产,需识别真正的权威来源
+
+每条干扰附 `trap_kind ∈ {version_conflict, role_mix, scope_creep, fuzzy_trigger, emotional_pressure, authority_overlap, none}`。
+**none** 表示该条只是普通噪声,不构成陷阱。**陷阱型 (trap=true) 的 trap_kind 必须 ≠ none**。
+
+# 协同硬规则(违反将被拒收)
+- **constraints 与 interferences 不得指向同一失败点**: 例如约束已写"必须排除过时条款",
+  干扰就不能再造一条"看似合理但需核对时效性",必须换成另一维度
+- 难度=basic 时 target_interferences 可能为 0,此时只输出 interferences=[]
+- 难度=expert 时 **至少 1 条** trap=true 且 trap_kind ≠ none
+- 每条干扰 ≤ 60 字,中文陈述句
+- **禁止编造不存在的权威来源**(如某条例若不在 fragment_snippets 与 glossary 中提及,不得引用)
+- **text 中严禁出现 KB-xxx / BP-xxx / FRAG-xxx / UG-xxx / FEAT-xxx 等内部 ID 代号**,
+  用业务语言替代:`KB-xxx` → 资产类别(如"实务问答库");`FRAG-xxx` → "相关条款/案例条目";
+  `BP-xxx` → "该业务流程"
+
+# 输出 schema(只输出合法 JSON,严禁 markdown 围栏与解释文字)
+{
+  "constraints": [
+    {"text": "string", "source": "string", "targets": ["weak_point 名 或 维度名"]}
+  ],
+  "interferences": [
+    {"text": "string", "trap": true|false, "trap_kind": "string", "category": "string"}
+  ]
+}

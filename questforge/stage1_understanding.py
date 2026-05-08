@@ -568,9 +568,17 @@ def run(agent_input: AgentInput, out_dir: Path) -> Path:
             "key_fields": c["key_fields"],
             "authority": c["authority"],
             "category": c["category"],
+            "columns": list(c.get("columns") or [])[:30],
+            "sample_rows": [
+                {k: truncate(str(v), 80) for k, v in (row or {}).items()}
+                for row in (c.get("sample_rows") or [])[:3]
+            ],
         }
         for c in kb_cards
     ]
+
+    # 截断到 ~4KB,供 Stage 2/3 复用原始文档摘要而无需重读 docs_dir
+    docs_digest = truncate(docs_excerpt, 4000) if docs_excerpt else ""
 
     artifacts = {
         "business_goal": business_goal,
@@ -578,6 +586,7 @@ def run(agent_input: AgentInput, out_dir: Path) -> Path:
         "features": features,
         "knowledge_assets": knowledge_assets,
         "glossary": glossary,
+        "docs_digest": docs_digest,
     }
 
     # --- 8. 校验清单 ---

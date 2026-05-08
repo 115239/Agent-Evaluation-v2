@@ -38,7 +38,8 @@ log = logging.getLogger("questforge.stage3")
 
 
 # ========== 内部 ID 清洗(避免泄漏到面向用户的题目) ==========
-_INTERNAL_ID_RE = re.compile(r"\b(KB|BP|FRAG|UG|FEAT|PT|TEST|C|I)-\d+(?:-\d+)?\b")
+# 注意:中文与字母相邻时 \b 不触发,因此放宽边界,只用前后向的"非数字/字母"避免吃到别的 token。
+_INTERNAL_ID_RE = re.compile(r"(?<![A-Za-z0-9])(KB|BP|FRAG|UG|FEAT|PT|TEST|C|I)-\d+(?:-\d+)?(?![A-Za-z0-9])")
 
 
 def _strip_internal_ids(text: str, asset_by_id: dict[str, dict[str, Any]]) -> str:
@@ -417,7 +418,7 @@ def _llm_extract_keyword(client: LLMClient, text: str) -> str:
     return ""
 
 
-# ========== Step 3.4/3.5 约束项 + 干扰项设计(LLM 生成,维度问卷驱动) ==========
+# ========== Step 3.4/3.5 约束项 + 干扰项协同设计(单次 LLM 调用) ==========
 def _process_feature_profile(
     rep_process: dict[str, Any], asset_cards: list[dict[str, Any]], weak_points: list[str]
 ) -> dict[str, Any]:
@@ -434,6 +435,146 @@ def _process_feature_profile(
     }
 
 
+def _jaccard_chars(a: str, b: str) -> float:
+    """字符级 Jaccard,用于检测约束/干扰是否重复指向同一失败点。"""
+    sa = {ch for ch in (a or "") if "\u4e00" <= ch <= "\u9fa5"}
+    sb = {ch for ch in (b or "") if "\u4e00" <= ch <= "\u9fa5"}
+    if not sa or not sb:
+        return 0.0
+    return len(sa & sb) / max(len(sa | sb), 1)
+
+
+def _personas_brief(rep_process: dict[str, Any], user_groups_by_id: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for actor in (rep_process.get("actors") or []):
+        ug = user_groups_by_id.get((actor.get("id") or "").strip(), {})
+        persona = ug.get("persona") or {}
+        eb = persona.get("emotional_baseline") or {}
+        kd = persona.get("knowledge_domain") or {}
+        if (eb.get("frustration_triggers") or []) or (kd.get("misconceptions") or []):
+            out.append(
+                {
+                    "id": ug.get("id"),
+                    "role": ug.get("role"),
+                    "frustration_triggers": eb.get("frustration_triggers") or [],
+                    "misconceptions": kd.get("misconceptions") or [],
+                    "stress_level": eb.get("stress_level") or "NOT_SPECIFIED",
+                }
+            )
+    return out
+
+
+def _llm_design_constraints_and_interferences(
+    client: LLMClient,
+    rep_process: dict[str, Any],
+    asset_cards: list[dict[str, Any]],
+    fragments: list[KBFragment],
+    keyword_pool: list[str],
+    weak_points: list[str],
+    domain: str,
+    difficulty: str,
+    c_counter: IdCounter,
+    i_counter: IdCounter,
+    asset_by_id: dict[str, dict[str, Any]],
+    user_personas: list[dict[str, Any]] | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """单次 LLM 调用同时生成约束与干扰,在 prompt 内强制互不重复 + fragment 落地 + trap_kind 语义。"""
+    system_path = config.REPO_ROOT / "questforge/prompts/stage3_design.txt"
+    system = system_path.read_text(encoding="utf-8")
+
+    profile = _process_feature_profile(rep_process, asset_cards, weak_points)
+    fragment_snippets = [
+        {"frag_id": f.frag_id, "asset_id": f.asset_id, "snippet": truncate(f.key_text, 160)}
+        for f in fragments[:6]
+    ]
+    target_constraints = config.STAGE3_CONSTRAINT_COUNT.get(difficulty, (3, 4))
+    target_interferences = config.INTERFERENCE_DENSITY.get(difficulty, 1)
+
+    user = (
+        f"<domain>{domain}</domain>\n"
+        f"<difficulty>{difficulty}</difficulty>\n"
+        f"<process>{json.dumps({'id': rep_process.get('id'), 'name': rep_process.get('name'), 'outputs': rep_process.get('outputs')}, ensure_ascii=False)}</process>\n"
+        f"<profile>{json.dumps(profile, ensure_ascii=False)}</profile>\n"
+        f"<fragment_snippets>{json.dumps(fragment_snippets, ensure_ascii=False)}</fragment_snippets>\n"
+        f"<keyword_pool>{json.dumps(keyword_pool, ensure_ascii=False)}</keyword_pool>\n"
+        f"<user_personas>{json.dumps(user_personas or [], ensure_ascii=False)}</user_personas>\n"
+        f"<target_constraints>{target_constraints[0]}-{target_constraints[1]}</target_constraints>\n"
+        f"<target_interferences>{target_interferences}</target_interferences>\n"
+        f"<trap_required>{'true' if difficulty == 'expert' else 'false'}</trap_required>\n"
+        f"<trap_kind_vocab>{json.dumps(list(config.TRAP_KIND_VOCAB), ensure_ascii=False)}</trap_kind_vocab>\n"
+    )
+    out = client.chat_json(system, user, max_tokens=2400)
+    if not isinstance(out, dict):
+        return [], []
+
+    raw_cs = out.get("constraints") or []
+    raw_is = out.get("interferences") or []
+
+    constraints: list[dict[str, Any]] = []
+    for item in raw_cs[: target_constraints[1]]:
+        text = _strip_internal_ids((item.get("text") or "").strip(), asset_by_id)
+        if not text:
+            continue
+        constraints.append(
+            {
+                "id": c_counter.next(),
+                "text": text,
+                "source": (item.get("source") or "LLM 推导").strip(),
+                "targets": [str(t).strip() for t in (item.get("targets") or []) if str(t).strip()],
+            }
+        )
+
+    interferences: list[dict[str, Any]] = []
+    overlap_thr = config.STAGE3_DESIGN_OVERLAP_THRESHOLD
+    for item in raw_is[: max(target_interferences, 1) if difficulty != "basic" else target_interferences]:
+        text = _strip_internal_ids((item.get("text") or "").strip(), asset_by_id)
+        if not text:
+            continue
+        # 互斥校验:与任一约束 jaccard ≥ 阈值则丢弃
+        if any(_jaccard_chars(text, c["text"]) >= overlap_thr for c in constraints):
+            log.info(
+                "[Stage3] 干扰 '%s' 与已有约束相似度过高,丢弃以避免重复指向同一失败点", truncate(text, 40)
+            )
+            continue
+        trap_kind = (item.get("trap_kind") or "none").strip()
+        if trap_kind not in config.TRAP_KIND_VOCAB:
+            trap_kind = "none"
+        is_trap = bool(item.get("trap", False)) or (trap_kind != "none")
+        # 兜底:LLM 漏标但 text 命中关键词,回填 trap=true
+        if not is_trap and any(k in text for k in config.TRAP_KEYWORDS):
+            is_trap = True
+            if trap_kind == "none":
+                trap_kind = "version_conflict"
+        category = (item.get("category") or trap_kind or "unspecified").strip().lower()
+        interferences.append(
+            {
+                "id": i_counter.next(),
+                "text": text,
+                "trap": is_trap,
+                "trap_kind": trap_kind,
+                "category": category,
+                "process_ref": rep_process.get("name"),
+            }
+        )
+
+    # expert 必须至少 1 个 trap=true 且 trap_kind != none
+    if difficulty == "expert" and not any(x["trap"] and x["trap_kind"] != "none" for x in interferences):
+        # 优先把已有 trap_kind != none 的标 trap=true
+        for x in interferences:
+            if x["trap_kind"] != "none":
+                x["trap"] = True
+                break
+        # 仍不满足:把最后一条 text 含关键词的回填
+        if not any(x["trap"] and x["trap_kind"] != "none" for x in interferences):
+            for x in interferences:
+                if any(k in x["text"] for k in config.TRAP_KEYWORDS):
+                    x["trap"] = True
+                    x["trap_kind"] = "version_conflict"
+                    break
+
+    return constraints, interferences
+
+
 def _llm_generate_constraints(
     client: LLMClient,
     rep_process: dict[str, Any],
@@ -443,33 +584,21 @@ def _llm_generate_constraints(
     counter: IdCounter,
     difficulty: str,
     asset_by_id: dict[str, dict[str, Any]],
+    *,
+    fragments: list[KBFragment] | None = None,
+    keyword_pool: list[str] | None = None,
+    user_personas: list[dict[str, Any]] | None = None,
+    _shared_state: dict | None = None,
 ) -> list[dict[str, Any]]:
-    system_path = config.REPO_ROOT / "questforge/prompts/stage3_constraints.txt"
-    system = system_path.read_text(encoding="utf-8")
-    profile = _process_feature_profile(rep_process, asset_cards, weak_points)
-    min_n, max_n = config.STAGE3_CONSTRAINT_COUNT.get(difficulty, (3, 4))
-    user = (
-        f"<domain>{domain}</domain>\n"
-        f"<process>{json.dumps({'id': rep_process.get('id'), 'name': rep_process.get('name'), 'outputs': rep_process.get('outputs')}, ensure_ascii=False)}</process>\n"
-        f"<feature_profile>{json.dumps(profile, ensure_ascii=False)}</feature_profile>\n"
-        f"<target_count>{min_n}-{max_n}</target_count>\n"
-        '请输出 {"constraints":[{"text":"string","source":"string"}...]};不要解释。'
-    )
-    out = client.chat_json(system, user, max_tokens=1200)
-    raw = (out.get("constraints") if isinstance(out, dict) else None) or []
-    cs: list[dict[str, Any]] = []
-    for item in raw[:max_n]:
-        text = _strip_internal_ids((item.get("text") or "").strip(), asset_by_id)
-        if not text:
-            continue
-        cs.append(
-            {
-                "id": counter.next(),
-                "text": text,
-                "source": (item.get("source") or "LLM 推导").strip(),
-            }
+    """薄包装:与 _llm_generate_interferences 共享一次 LLM 调用结果。"""
+    state = _shared_state if _shared_state is not None else {}
+    if "result" not in state:
+        state["result"] = _llm_design_constraints_and_interferences(
+            client, rep_process, asset_cards, list(fragments or []), list(keyword_pool or []),
+            weak_points, domain, difficulty, counter, IdCounter("I"), asset_by_id,
+            user_personas=user_personas,
         )
-    return cs
+    return state["result"][0]
 
 
 def _llm_generate_interferences(
@@ -482,88 +611,44 @@ def _llm_generate_interferences(
     counter: IdCounter,
     asset_by_id: dict[str, dict[str, Any]],
     user_personas: list[dict[str, Any]] | None = None,
+    *,
+    _shared_state: dict | None = None,
 ) -> list[dict[str, Any]]:
-    """按密度规则生成干扰项。expert 必须包含 ≥1 个陷阱型。"""
-    n = config.INTERFERENCE_DENSITY[difficulty]
-    if n == 0:
+    """薄包装:从共享 state 取干扰,密度=0 时跳过。"""
+    if config.INTERFERENCE_DENSITY[difficulty] == 0:
         return []
-
-    system_path = config.REPO_ROOT / "questforge/prompts/stage3_interferences.txt"
-    system = system_path.read_text(encoding="utf-8")
-    profile = _process_feature_profile(rep_process, asset_cards, weak_points)
-    personas_brief = []
-    for p in user_personas or []:
-        persona_payload = p.get("persona") or {}
-        eb = persona_payload.get("emotional_baseline") or {}
-        kd = persona_payload.get("knowledge_domain") or {}
-        if (eb.get("frustration_triggers") or []) or (kd.get("misconceptions") or []):
-            personas_brief.append(
-                {
-                    "id": p.get("id"),
-                    "role": p.get("role"),
-                    "frustration_triggers": eb.get("frustration_triggers") or [],
-                    "misconceptions": kd.get("misconceptions") or [],
-                    "stress_level": eb.get("stress_level") or "NOT_SPECIFIED",
-                }
-            )
-    user = (
-        f"<domain>{domain}</domain>\n"
-        f"<process>{json.dumps({'id': rep_process.get('id'), 'name': rep_process.get('name'), 'outputs': rep_process.get('outputs')}, ensure_ascii=False)}</process>\n"
-        f"<feature_profile>{json.dumps(profile, ensure_ascii=False)}</feature_profile>\n"
-        f"<user_personas>{json.dumps(personas_brief, ensure_ascii=False)}</user_personas>\n"
-        f"<difficulty>{difficulty}</difficulty>\n"
-        f"<target_count>{n}</target_count>\n"
-        f"<trap_required>{'true' if difficulty == 'expert' else 'false'}</trap_required>\n"
-        '请输出 {"interferences":[{"text":"string","trap":bool,"category":"string"}...]};陷阱型 text 必须含'
-        f" {config.TRAP_KEYWORDS} 中任一关键词;不要解释。"
-    )
-    out = client.chat_json(system, user, max_tokens=1200)
-    raw = (out.get("interferences") if isinstance(out, dict) else None) or []
-    items: list[dict[str, Any]] = []
-    for item in raw[:n]:
-        text = _strip_internal_ids((item.get("text") or "").strip(), asset_by_id)
-        if not text:
-            continue
-        is_trap = bool(item.get("trap", False)) or any(k in text for k in config.TRAP_KEYWORDS)
-        category = (item.get("category") or "").strip().lower() or "unspecified"
-        items.append(
-            {
-                "id": counter.next(),
-                "text": text,
-                "trap": is_trap,
-                "category": category,
-                "process_ref": rep_process.get("name"),
-            }
-        )
-
-    # expert 必须至少 1 个陷阱;若 LLM 没给,但文本含关键词则补标
-    if difficulty == "expert" and not any(x["trap"] for x in items):
-        for x in items:
-            if any(k in x["text"] for k in config.TRAP_KEYWORDS):
-                x["trap"] = True
-                break
-    return items
+    state = _shared_state or {}
+    if "result" not in state:
+        return []
+    return state["result"][1]
 
 
 # ========== Step 3.6 真实性三检验 ==========
 def _build_authority_keywords(
     glossary: dict[str, str], knowledge_assets: list[dict[str, Any]], weak_points: list[str]
 ) -> list[str]:
-    """动态组装权威词:术语表 + 资产 authority 标签 + weak_points 关键短语。"""
+    """组装"权威词":只取真正具有领域语义的词,避免"含'条款'就 pass"的低门槛幻觉。
+
+    收紧规则:
+    - 保留 glossary keys(用户/LLM 抽取的领域术语)
+    - 保留 asset.authority(标签如"官方"等仅 ≥3 字时才计,过滤通用短词)
+    - 保留 asset.category 本身(≥3 字),不再展开其分词(原"category 分词→关键词"会引入'条款'等通用噪声)
+    - 保留 weak_points 抽出的关键词
+    - 不再把 key_fields(列名)当作权威词
+    """
     kws: set[str] = set()
-    kws.update(k for k in glossary.keys() if k)
-    kws.update(a.get("authority", "") for a in knowledge_assets if a.get("authority"))
-    for asset in knowledge_assets:
-        category = (asset.get("category") or "").strip()
-        if category:
+    kws.update(k for k in glossary.keys() if k and len(k) >= 2)
+    for a in knowledge_assets:
+        auth = (a.get("authority") or "").strip()
+        if auth and len(auth) >= 3:
+            kws.add(auth)
+        category = (a.get("category") or "").strip()
+        if category and len(category) >= 3:
             kws.add(category)
-            kws.update(extract_local_keywords(category, top_k=3))
-        for field in asset.get("key_fields") or []:
-            if field:
-                kws.add(str(field).strip())
     for wp in weak_points:
         for kw in extract_local_keywords(wp, top_k=2):
-            kws.add(kw)
+            if kw and len(kw) >= 2:
+                kws.add(kw)
     return sorted(x for x in kws if x)
 
 
@@ -702,7 +787,7 @@ def run(stage2_md: Path | str, out_dir: Path | None, agent_input: AgentInput) ->
     # --- 3.2-3.6 逐题组装 ---
     rng = random.Random(42)
     llm_kw_budget = [config.MAX_LLM_KEYWORD_CALLS]
-    llm_realism_budget = [config.MAX_LLM_KEYWORD_CALLS]
+    llm_realism_budget = [config.STAGE3_REALISM_LLM_BUDGET]
 
     c_counter = IdCounter("C")
     i_counter = IdCounter("I")
@@ -748,19 +833,20 @@ def run(stage2_md: Path | str, out_dir: Path | None, agent_input: AgentInput) ->
             rng.shuffle(other_ids)
             noise_frags = [by_id[fid] for fid in other_ids[:interference_frag_count]]
 
-        # LLM 生成约束/干扰(按难度控制数量 + 清洗内部 ID)
-        raw_constraints = _llm_generate_constraints(
-            client, rep, asset_cards, agent_input.weak_points, agent_input.domain,
-            c_counter, test["difficulty"], asset_by_id,
-        )
-        raw_interferences = _llm_generate_interferences(
-            client, rep, asset_cards, agent_input.weak_points, agent_input.domain,
-            test["difficulty"], i_counter, asset_by_id,
-            user_personas=[
-                user_groups_by_id.get((actor.get("id") or "").strip(), {})
-                for actor in (rep.get("actors") or [])
-                if (actor.get("id") or "").strip() in user_groups_by_id
-            ],
+        # 协同设计:单次 LLM 调用同时产 constraints + interferences,fragment 注入,trap_kind 语义化
+        raw_constraints, raw_interferences = _llm_design_constraints_and_interferences(
+            client,
+            rep,
+            asset_cards,
+            fragments,
+            keyword_pool,
+            agent_input.weak_points,
+            agent_input.domain,
+            test["difficulty"],
+            c_counter,
+            i_counter,
+            asset_by_id,
+            user_personas=_personas_brief(rep, user_groups_by_id),
         )
 
         if not raw_constraints:
@@ -795,8 +881,9 @@ def run(stage2_md: Path | str, out_dir: Path | None, agent_input: AgentInput) ->
             else:
                 realism_discarded.append(f"[{test['test_id']}][I] {i['text']}")
 
-        realism_total = len(raw_constraints) + len(raw_interferences)
-        realism_passed = len(constraints) + len(interferences)
+        realism_total_raw = len(raw_constraints) + len(raw_interferences)
+        realism_kept = len(constraints) + len(interferences)
+        realism_filtered = realism_total_raw - realism_kept
 
         test_contexts.append(
             {
@@ -815,7 +902,13 @@ def run(stage2_md: Path | str, out_dir: Path | None, agent_input: AgentInput) ->
                 "keyword_pool": keyword_pool,
                 "constraints": constraints,
                 "interferences": interferences,
-                "realism_check": {"total": realism_total, "passed": realism_passed},
+                # 留存项 100% 通过真实性;原始 LLM 产出与丢弃数留作监控
+                "realism_check": {
+                    "total": realism_kept,
+                    "passed": realism_kept,
+                    "raw_total": realism_total_raw,
+                    "filtered_out": realism_filtered,
+                },
             }
         )
 
@@ -848,11 +941,26 @@ def run(stage2_md: Path | str, out_dir: Path | None, agent_input: AgentInput) ->
             if got < 2 or not any(i.get("trap") for i in tc["interferences"]):
                 density_ok = False
                 break
-        else:
+        elif tc["difficulty"] == "advanced":
+            # 互斥过滤可能让干扰降到 0,允许 got >= 1(放宽:advanced 至少 1 条干扰)
+            if got < 1:
+                density_ok = False
+                break
+        else:  # basic
             if got != want:
                 density_ok = False
                 break
-    checklist.add("basic 0 干扰、advanced 1、expert ≥2 且含 1 陷阱", density_ok)
+    checklist.add("basic 0 干扰、advanced ≥1、expert ≥2 且含 1 陷阱", density_ok)
+
+    trap_kind_ok = all(
+        all(i.get("trap_kind") in config.TRAP_KIND_VOCAB for i in tc["interferences"]) and
+        (
+            tc["difficulty"] != "expert"
+            or any(i.get("trap_kind") and i["trap_kind"] != "none" for i in tc["interferences"])
+        )
+        for tc in test_contexts
+    )
+    checklist.add("trap_kind 取值合法且 expert 至少 1 条 trap_kind ≠ none", trap_kind_ok)
 
     checklist.add(
         "每条约束/干扰通过真实性三检验之一",
@@ -958,12 +1066,17 @@ def _render_test_section(tc: dict[str, Any], rep_process: dict[str, Any]) -> str
         f"- **约束项**({len(tc['constraints'])}):",
     ]
     for c in tc["constraints"]:
-        lines.append(f"  1. {c['id']} · {c['text']} [来源:{c['source']} · 验证:{c['verified_by']}]")
+        targets = c.get("targets") or []
+        targets_str = f" → {'/'.join(targets)}" if targets else ""
+        lines.append(
+            f"  1. {c['id']} · {c['text']}{targets_str} [来源:{c['source']} · 验证:{c['verified_by']}]"
+        )
     lines.append(f"- **干扰项**({len(tc['interferences'])}):")
     if not tc["interferences"]:
         lines.append("  - 无(符合 basic 干扰密度=0)")
     for i in tc["interferences"]:
-        trap = "陷阱·" if i.get("trap") else ""
+        kind = i.get("trap_kind") or "none"
+        trap = f"陷阱·[{kind}]·" if i.get("trap") else f"[{kind}] "
         lines.append(f"  1. {i['id']} · {trap}{i['text']} [验证:{i['verified_by']}]")
     r = tc["realism_check"]
     lines.append(f"- **真实性验证**:{r['passed']}/{r['total']}")
