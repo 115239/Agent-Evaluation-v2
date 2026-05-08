@@ -381,7 +381,7 @@ shared:
       backend: openai
       model_name: Qwen/Qwen3.5-397B-A17B
 # .env 文件
-LLM_API_KEY=sk-xxx
+LLM_API_KEY=<YOUR_API_KEY>
 LLM_BASE_URL=https://api.siliconflow.cn/v1
 ```
 
@@ -731,7 +731,7 @@ default_tenant: default
 **最小化配置** (`.env` + `service.yaml`):
 ```bash
 # .env
-LLM_API_KEY=sk-xxx
+LLM_API_KEY=<YOUR_API_KEY>
 LLM_BASE_URL=https://api.siliconflow.cn/v1
 ```
 

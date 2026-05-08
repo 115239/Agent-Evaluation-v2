@@ -168,7 +168,7 @@ def run(stage4_md: Path | str, out_dir: Path | None, agent_input: AgentInput) ->
                     field_name="LLM_API_KEY",
                     why_needed="Stage 6 全部依赖 LLM(2 次答题模拟 + 2 次 judge,每题 4 次)",
                     suggested_format="配置 .env 里的 LLM_API_KEY",
-                    example="LLM_API_KEY=sk-xxx",
+                    example="LLM_API_KEY=<YOUR_API_KEY>",
                 )
             ],
         )

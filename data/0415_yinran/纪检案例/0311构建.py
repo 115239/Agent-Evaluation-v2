@@ -10,7 +10,7 @@ import random
 warnings.filterwarnings('ignore')  # 屏蔽Excel无关警告
 
 # ==================== 配置区域（可直接调整）====================
-DEEPSEEK_API_KEY = "DEEPSEEK_API_KEY_PLACEHOLDER"
+DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 MODEL_NAME = "deepseek-chat"
 

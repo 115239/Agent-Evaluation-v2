@@ -31,7 +31,7 @@ stage 4 题目合成参考 /Users/sin/Documents/Data/ccic/0320_data_ljtl_wblj/da
 # 0420
 
 大模型 openrouter 配置：
-OPENROUTER_API_KEY=OPENROUTER_API_KEY_PLACEHOLDER
+OPENROUTER_API_KEY=
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 anthropic/claude-opus-4.6
 google/gemini-3.1-pro-preview

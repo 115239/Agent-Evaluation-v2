@@ -374,7 +374,7 @@ def run(agent_input: AgentInput, out_dir: Path) -> Path:
                         "本 Pipeline 不提供领域默认值。"
                     ),
                     suggested_format="在 repo 根目录 `.env` 中设置环境变量",
-                    example="LLM_API_KEY=sk-xxx\nLLM_BASE_URL=https://...\nLLM_MODEL=qwen-plus",
+                    example="LLM_API_KEY=<YOUR_API_KEY>\nLLM_BASE_URL=https://...\nLLM_MODEL=qwen-plus",
                 )
             ],
             hint="检测到 LLM 客户端不可用。请配置 API key 后重跑。",

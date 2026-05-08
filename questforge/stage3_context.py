@@ -722,7 +722,7 @@ def run(stage2_md: Path | str, out_dir: Path | None, agent_input: AgentInput) ->
                     field_name="LLM_API_KEY",
                     why_needed="约束/干扰设计、资产裁决、真实性判定均需 LLM",
                     suggested_format="配置 .env 里的 LLM_API_KEY",
-                    example="LLM_API_KEY=sk-xxx",
+                    example="LLM_API_KEY=<YOUR_API_KEY>",
                 )
             ],
         )
